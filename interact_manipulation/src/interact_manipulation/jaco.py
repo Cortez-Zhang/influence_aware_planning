@@ -2,13 +2,13 @@
 
 import sys
 import rospy
+import rospkg
+import numpy as np
 import moveit_commander
-import moveit_msgs.msg
-import geometry_msgs.msg
 from moveit_msgs.srv import GetPositionIK, GetPositionFK
 from moveit_msgs.msg import PositionIKRequest, DisplayTrajectory, RobotState
 from std_msgs.msg import Header
-from visualization_msgs.msg import Marker
+from visualization_msgs.msg import Marker, MarkerArray
 from jaco_trajopt import JacoTrajopt
 
 
@@ -21,6 +21,7 @@ class JacoInterface:
         self.arm_group = moveit_commander.MoveGroupCommander('arm')
 
         self.marker_pub = rospy.Publisher('/visualization_marker', Marker, queue_size=10)
+        self.marker_array_pub = rospy.Publisher('/visualization_marker_array', MarkerArray, queue_size=10)
         self.display_trajectory_pub = rospy.Publisher('/move_group/display_planned_path',
                                                       DisplayTrajectory, queue_size=10)
 
@@ -130,6 +131,15 @@ def main():
 
     jaco = JacoInterface()
 
+    # Add a coke can
+    rospack = rospkg.RosPack()
+    package_path = rospack.get_path('interact_manipulation')
+    coke_can_urdf_path = package_path + '/data/coke_can.urdf'
+    jaco.planner.load_body_from_urdf(coke_can_urdf_path, np.array([[1.0, 0.0, 0.0, 0.25],
+                                                                   [0.0, 1.0, 0.0, 0.0],
+                                                                   [0.0, 0.0, 1.0, 0.75],
+                                                                   [0.0, 0.0, 0.0, 1.0]]))
+
     # print(arm_group.get_current_pose())
 
     # Move the arm to the initial configuration
@@ -146,6 +156,10 @@ def main():
 
     jaco.execute(traj)
 
+    markers = jaco.planner.get_body_markers()
+    for m in markers:
+        jaco.marker_array_pub.publish(m)
+
     tmp = raw_input("Enter to continue...")
 
     # Move the arm to a new configuration
@@ -158,10 +172,34 @@ def main():
     traj = jaco.plan(start_pose, goal_pose)
     jaco.execute(traj)
 
+    markers = jaco.planner.get_body_markers()
+    for m in markers:
+        jaco.marker_array_pub.publish(m)
+
     rospy.spin()
 
     moveit_commander.roscpp_shutdown()
 
 
+def test():
+    moveit_commander.roscpp_initialize(sys.argv)
+    rospy.init_node('jaco_move_group')
+
+    jaco = JacoInterface()
+
+    res = jaco.ik(jaco.arm_group.get_current_pose())
+    start_config = [q for q in res.solution.joint_state.position[0:7]]
+    start_config[2] += 3.1415
+    jaco.planner.jaco.SetDOFValues(start_config + jaco.planner.finger_joint_values)
+
+    markers = jaco.planner.get_body_markers()
+    for m in markers:
+        jaco.marker_array_pub.publish(m)
+
+    rospy.spin()
+
+    moveit_commander.roscpp_shutdown()
+
 if __name__ == '__main__':
     main()
+    # test()
