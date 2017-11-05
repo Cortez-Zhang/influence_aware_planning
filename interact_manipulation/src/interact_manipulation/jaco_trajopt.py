@@ -6,6 +6,7 @@ import time
 import random
 import math
 import numpy as np
+from abc import ABCMeta, abstractmethod
 import trajoptpy
 import openravepy
 import rospy
@@ -14,7 +15,23 @@ from trajectory_msgs.msg import JointTrajectoryPoint
 from visualization_msgs.msg import Marker, MarkerArray
 
 
+class CostFunction:
+    """ Base class for a cost function for Trajopt """
+
+    __metaclass__ = ABCMeta
+
+    def __init__(self, params):
+        self.params = params
+
+    @abstractmethod
+    def get_cost(self, config):
+        """ Returns the cost incurred at the specified configuration """
+        pass
+
+
 class JacoTrajopt:
+    """ Interface to Trajopt planner and OpenRAVE """
+
     def __init__(self):
         self.env = openravepy.Environment()
 
@@ -37,6 +54,9 @@ class JacoTrajopt:
                             'j2s7s300_joint_5',
                             'j2s7s300_joint_6',
                             'j2s7s300_joint_7']
+
+        self.trajopt_num_waypoints = 10
+        self.cost_functions = []
 
     def load_body_from_urdf(self, path_to_urdf, transform=np.eye(4, 4)):
         """ Load a body (non-robot object) from a URDF file into the OpenRAVE environment """
@@ -99,14 +119,18 @@ class JacoTrajopt:
         """ Plan from a start configuration to goal configuration """
         print("Planning from config {} to {}...".format(start_config,
                                                         goal_config))
-        # print(self.jaco.GetDOFValues())
+
+        dofs = len(start_config)
+
         start_config[2] += math.pi  # TODO this seems to be a bug in OpenRAVE?
         goal_config[2] += math.pi  # TODO this seems to be a bug in OpenRAVE?
+
         self.jaco.SetDOFValues(start_config + self.finger_joint_values)
+
         request = {
             "basic_info":
                 {
-                    "n_steps": 10,
+                    "n_steps": self.trajopt_num_waypoints,
                     "manip": self.jaco.GetActiveManipulator().GetName(),
                     "start_fixed": True
                 },
@@ -131,6 +155,12 @@ class JacoTrajopt:
         }
         s = json.dumps(request)  # convert dictionary into json-formatted string
         prob = trajoptpy.ConstructProblem(s, self.env)  # create object that stores optimization problem
+
+        # Add the cost function
+        for i, cost_function in enumerate(self.cost_functions):
+            for t in range(1, self.trajopt_num_waypoints):
+                prob.AddCost(cost_function.get_cost, [(t, j) for j in range(dofs)], "cost_{}_waypoint_{}".format(i, t))
+
         t_start = time.time()
         result = trajoptpy.OptimizeProblem(prob)  # do optimization
         t_elapsed = time.time() - t_start
