@@ -45,9 +45,5 @@
 
     <!-- Given the published joint states, publish tf for the robot links -->
 
-    <node name="jaco" pkg="interact_manipulation" type="jaco.py" respawn="true">
-        <remap from="joint_states" to="/j2s7s300/joint_states"/>
-    </node>
-
     <node name="rviz" pkg="rviz" type="rviz"></node>
 </launch>
