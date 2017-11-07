@@ -11,7 +11,6 @@ from std_msgs.msg import Header
 from visualization_msgs.msg import Marker
 from jaco_trajopt import JacoTrajopt
 
-
 class JacoInterface:
     def __init__(self):
         self.robot = moveit_commander.RobotCommander()
@@ -33,6 +32,7 @@ class JacoInterface:
         self.compute_fk = rospy.ServiceProxy('/compute_fk', GetPositionFK)
 
         self.planner = JacoTrajopt()
+        self.home_pose = [0.0,2.9,0.0,1.3,4.2,1.4,0.0]
 
     def ik(self, pose_stamped, group_name='arm'):
         """ Computes the inverse kinematics """
@@ -122,6 +122,14 @@ class JacoInterface:
 
         # Execute the trajectory
         self.arm_group.execute(traj, wait=wait)
+
+    def home(self):
+        initial_joints = self.home_pose
+        res = self.fk(initial_joints, links=['j2s7s300_end_effector'])
+        start_pose = self.arm_group.get_current_pose()
+        goal_pose = res.pose_stamped[0]
+        traj = self.plan(start_pose, goal_pose)
+        self.execute(traj)
 
 
 def main():
