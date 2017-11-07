@@ -10,6 +10,7 @@ from abc import ABCMeta, abstractmethod
 import trajoptpy
 import openravepy
 import rospy
+import angles
 from moveit_msgs.msg import RobotTrajectory
 from trajectory_msgs.msg import JointTrajectoryPoint
 from visualization_msgs.msg import Marker, MarkerArray
@@ -46,7 +47,8 @@ class JacoTrajopt:
         name = self.urdf_module.SendCommand("load {} {}".format(jaco_urdf_path,
                                                                 jaco_srdf_path))
         self.jaco = self.env.GetRobot(name)
-        self.finger_joint_values = [0.0, 0.0, 0.0]
+        # self.finger_joint_values = [0.0, 0.0, 0.0]
+        self.finger_joint_values = [1.0, 1.0, 1.0]
         self.joint_names = ['j2s7s300_joint_1',
                             'j2s7s300_joint_2',
                             'j2s7s300_joint_3',
@@ -63,6 +65,17 @@ class JacoTrajopt:
         name = self.urdf_module.SendCommand("load {}".format(path_to_urdf))
         body = self.env.GetKinBody(name)
         body.SetTransform(transform)
+        self.env.Add(body, True)
+
+    def add_cube(self, x, y, z, dim_x, dim_y, dim_z, name='cube'):
+        body = openravepy.RaveCreateKinBody(self.env, '')
+        body.InitFromBoxes(np.array([[0.0, 0.0, 0.0, dim_x, dim_y, dim_z]]))
+        body.SetTransform([[1.0, 0.0, 0.0, x],
+                           [0.0, 1.0, 0.0, y],
+                           [0.0, 0.0, 1.0, z],
+                           [0.0, 0.0, 0.0, 1.0]])
+        body.SetName(name)
+        self.env.Add(body, True)
 
     def get_body_markers(self):
         """ Returns a list of visualization_msgs/MarkerArray with all the links of each body in the environment """
@@ -139,6 +152,18 @@ class JacoTrajopt:
                     {
                         "type": "joint_vel",  # joint-space velocity cost
                         "params": {"coeffs": [1]} # a list of length one is automatically expanded to a list of length n_dofs
+                    },
+                    {
+                        "type": "collision",
+                        "params": {
+                            "coeffs": [20],
+                        # penalty coefficients. list of length one is automatically expanded to a list of length n_timesteps
+                            "dist_pen": [0.025],
+                        # robot-obstacle distance that penalty kicks in. expands to length n_timesteps
+                            "first_step": 0,
+                            "last_step": self.trajopt_num_waypoints - 1,
+                            "continuous": True
+                        },
                     }
                 ],
             "constraints":
@@ -168,7 +193,7 @@ class JacoTrajopt:
         print(result)
         return self._to_trajectory_msg(result.GetTraj())
 
-    def _to_trajectory_msg(self, traj):
+    def _to_trajectory_msg(self, traj, max_joint_vel=0.5):
         """ Converts to a moveit_msgs/RobotTrajectory message """
         msg = RobotTrajectory()
         msg.joint_trajectory.joint_names = self.joint_names
@@ -182,4 +207,32 @@ class JacoTrajopt:
 
             msg.joint_trajectory.points.append(p)
 
+        self._assign_constant_velocity_profile(msg, max_joint_vel)
+
         return msg
+
+    def _assign_constant_velocity_profile(self, traj, max_joint_vel):
+        """ Assigns a constant velocity profile to a moveit_msgs/RobotTrajectory """
+        t = 0.0
+        for i in range(1, len(traj.joint_trajectory.points)):
+            p_prev = traj.joint_trajectory.points[i - 1]
+            p = traj.joint_trajectory.points[i]
+
+            num_dof = len(p_prev.positions)
+
+            max_joint_dist = 0.0
+            for j in range(num_dof):
+                dist = math.fabs(angles.shortest_angular_distance(p_prev.positions[j],
+                                                                  p.positions[j]))
+                max_joint_dist = max(max_joint_dist, dist)
+
+            dt = max_joint_dist / max_joint_vel
+
+            p.velocities = num_dof * [0.0]
+            for j in range(num_dof):
+                dist = math.fabs(angles.shortest_angular_distance(p_prev.positions[j],
+                                                                  p.positions[j]))
+                p.velocities[j] = dist / dt
+
+            t += dt
+            p.time_from_start = rospy.Duration(t)

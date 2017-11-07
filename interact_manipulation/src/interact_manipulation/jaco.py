@@ -58,7 +58,7 @@ class JacoInterface:
         return self.compute_fk(header, links, robot_state)
 
     def plan(self, start_pose, goal_pose):
-        """ Plan from the start pose to the end pose """
+        """ Plan from the start pose to the goal pose """
 
         # Visualize the start pose
         start_marker = Marker()
@@ -108,6 +108,59 @@ class JacoInterface:
         # Plan a trajectory with trajopt
         traj = self.planner.plan(start_config, goal_config)
         print(traj)
+
+        return traj
+
+    def plan_configs(self, start_config, goal_config):
+        """ Plan from the start configuration to the goal configuration """
+
+        res = self.fk(start_config, links=['j2s7s300_end_effector'])
+        start_pose = res.pose_stamped[0]
+
+        res = self.fk(goal_config, links=['j2s7s300_end_effector'])
+        goal_pose = res.pose_stamped[0]
+
+        # Visualize the start pose
+        start_marker = Marker()
+        start_marker.header.frame_id = start_pose.header.frame_id
+        start_marker.header.stamp = rospy.get_rostime()
+        start_marker.ns = 'planning_start'
+        start_marker.id = 0
+        start_marker.type = Marker.SPHERE
+        start_marker.pose = start_pose.pose
+        start_marker.scale.x = 0.1
+        start_marker.scale.y = 0.1
+        start_marker.scale.z = 0.1
+        start_marker.color.r = 1.0
+        start_marker.color.g = 0.0
+        start_marker.color.b = 0.0
+        start_marker.color.a = 0.75
+        start_marker.lifetime = rospy.Duration(0)
+        self.marker_pub.publish(start_marker)
+
+        # Visualize the goal pose
+        goal_marker = Marker()
+        goal_marker.header.frame_id = goal_pose.header.frame_id
+        goal_marker.header.stamp = rospy.get_rostime()
+        goal_marker.ns = 'planning_goal'
+        goal_marker.id = 0
+        goal_marker.type = Marker.SPHERE
+        goal_marker.pose = goal_pose.pose
+        goal_marker.scale.x = 0.1
+        goal_marker.scale.y = 0.1
+        goal_marker.scale.z = 0.1
+        goal_marker.color.r = 0.0
+        goal_marker.color.g = 1.0
+        goal_marker.color.b = 0.0
+        goal_marker.color.a = 0.75
+        goal_marker.lifetime = rospy.Duration(0)
+        self.marker_pub.publish(goal_marker)
+
+        print("start config = {}, goal config = {}".format(start_config, goal_config))
+
+        # Plan a trajectory with trajopt
+        traj = self.planner.plan(start_config, goal_config)
+        # print(traj)
 
         return traj
 
