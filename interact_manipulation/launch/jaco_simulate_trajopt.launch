@@ -1,0 +1,53 @@
+<launch>
+    <!-- these are the arguments you can pass this launch file, for example paused:=true -->  
+    <arg name="kinova_robotType" default="j2s7s300"/>
+    <arg name="kinova_robotName" default="$(arg kinova_robotType)"/>
+    <arg name="paused" default="false"/>
+    <arg name="use_sim_time" default="true"/>
+    <arg name="gui" default="false"/>
+    <arg name="headless" default="true"/>
+    <arg name="debug" default="false"/>
+    <arg name="use_trajectory_controller" default="true"/>
+    <arg name="is7dof" default="false"/>
+    <arg name="robot_connected" default="false"/>
+
+    <param name="robot_type" value="$(arg kinova_robotType)" />
+    <param name="robot_connected" value="$(arg robot_connected)" />
+
+    <param name="/pick_place_demo/arm/solve_type" value="Manipulation2" />
+    <param name="/pick_place_demo/arm/kinematics_solver_timeout" value="0.05" />
+
+    <!-- Launch the Jaco 7 DOF arm in Gazebo -->
+    <include file="$(find kinova_gazebo)/launch/robot_launch.launch">
+        <arg name="kinova_robotType" default="$(arg kinova_robotType)"/>
+        <arg name="headless" default="$(arg headless)"/>
+        <arg name="gui" default="$(arg gui)"/>
+        <arg name="is7dof" default="$(arg is7dof)"/>
+    </include>
+
+    <!-- Load the URDF, SRDF and other .yaml configuration files on the param server -->
+    <include file="$(find j2s7s300_moveit_config)/launch/planning_context.launch">
+        <arg name="load_robot_description" value="true"/>
+    </include>
+
+    <!-- Run the main MoveIt executable without trajectory execution (we do not have controllers configured by default) -->
+    <include file="$(find j2s7s300_moveit_config)/launch/move_group_j2s7s300.launch">
+        <arg name="allow_trajectory_execution" value="true"/>
+        <arg name="fake_execution" value="false"/>
+        <arg name="info" value="true"/>
+        <arg name="debug" value="$(arg debug)"/>
+        <arg name="joint_states_ns" value="/j2s7s300/joint_states"/>
+        <arg name="controller_manager" value="j2s7s300_ros_control"/>
+    </include>
+
+    <!-- ros-control Controller parameters-->
+    <rosparam file="$(find j2s7s300_moveit_config)/config/controllers_ros_control.yaml"/>
+
+    <!-- Given the published joint states, publish tf for the robot links -->
+
+    <node name="jaco" pkg="interact_manipulation" type="jaco.py" respawn="true">
+        <remap from="joint_states" to="/j2s7s300/joint_states"/>
+    </node>
+
+    <node name="rviz" pkg="rviz" type="rviz"></node>
+</launch>
