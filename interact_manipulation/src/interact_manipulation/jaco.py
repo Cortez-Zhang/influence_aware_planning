@@ -17,7 +17,7 @@ class JacoInterface:
         self.robot = moveit_commander.RobotCommander()
         # print(self.robot.get_group_names())
         # print(self.robot.get_current_state())
-
+        rospy.sleep(5)
         self.arm_group = moveit_commander.MoveGroupCommander('arm')
 
         self.marker_pub = rospy.Publisher('/visualization_marker', Marker, queue_size=10)
@@ -164,4 +164,7 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except rospy.ROSInterruptException:
+        pass
