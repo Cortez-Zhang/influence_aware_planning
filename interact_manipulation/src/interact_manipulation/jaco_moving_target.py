@@ -9,29 +9,30 @@ from jaco import JacoInterface
 from geometry_msgs.msg import Point, PoseStamped
 
 class MovingGoalPlanner():
-    def __init__:
+    def __init__(self):
         self.server = InteractiveMarkerServer("basic_controls")
         self.menu_handler = MenuHandler()
         self.jaco = JacoInterface()
-        self.menu_handler.insert( "Plan and Execute", callback=processFeedback )
-        self.markerPosition = Point( 0.5, 0.5, 0.5)
+        self.menu_handler.insert( "Plan and Execute", callback=self.processFeedback )
+        self.markerPosition = Point( 0.25, 0.25, 0.25)
 
     def processFeedback(self, feedback):
-        print("In processFeedback")
+
         goal_pose = PoseStamped()
         goal_pose.header = feedback.header
         goal_pose.pose = feedback.pose
 
         # Move the arm to the initial configuration
-        start_pose = jaco.arm_group.get_current_pose()
+
         #print("starting pose {}").format(start_pose)
         if feedback.event_type == InteractiveMarkerFeedback.MENU_SELECT:
-            print("goal pose {}").format(goal_pose)
+            start_pose = self.jaco.arm_group.get_current_pose()
+            rospy.loginfo("Requesting plan for start_pose {} goal_pose {}".format(start_pose, goal_pose))
 
-            traj = jaco.plan(start_pose, goal_pose)
-            print("planned Trajectory {}").format(traj)
-            jaco.execute(traj)
-        server.applyChanges()
+            traj = self.jaco.plan(start_pose, goal_pose)
+            #print("planned Trajectory {}").format(traj)
+            self.jaco.execute(traj)
+        self.server.applyChanges()
 
     def makeBox(self, msg):
         marker = Marker()
@@ -48,23 +49,23 @@ class MovingGoalPlanner():
 
     def makeBoxControl(self, msg):
 
-        control =  InteractiveMarkerControl()
+        control = InteractiveMarkerControl()
         control.always_visible = True
-        control.markers.append( makeBox(msg) )
+        control.markers.append( self.makeBox(msg) )
         msg.controls.append( control )
         return control
     # makes a marker which dynamically moves around
-    def make6DofMarker(self, fixed, interaction_mode, show_6dof = False):
+    def make6DofMarker(self, fixed, interaction_mode, show_6dof = False, scale = .1):
         int_marker = InteractiveMarker()
         int_marker.header.frame_id = "root"
         int_marker.pose.position = self.markerPosition
-        int_marker.scale = 1
+        int_marker.scale = scale
 
         int_marker.name = "simple_6dof"
         int_marker.description = "Simple 6-DOF Control"
 
         # insert a box
-        makeBoxControl(int_marker)
+        self.makeBoxControl(int_marker)
         int_marker.controls[0].interaction_mode = interaction_mode
 
         if fixed:
@@ -79,8 +80,8 @@ class MovingGoalPlanner():
             int_marker.name += "_" + control_modes_dict[interaction_mode]
             int_marker.description = "3D Control"
             if show_6dof: 
-            int_marker.description += " + 6-DOF controls"
-            int_marker.description += "\n" + control_modes_dict[interaction_mode]
+                int_marker.description += " + 6-DOF controls"
+                int_marker.description += "\n" + control_modes_dict[interaction_mode]
         
         if show_6dof: 
             control = InteractiveMarkerControl()
@@ -149,20 +150,20 @@ class MovingGoalPlanner():
                 control.orientation_mode = InteractiveMarkerControl.FIXED
             int_marker.controls.append(control)
 
-        server.insert(int_marker, processFeedback)
-        menu_handler.apply( server, int_marker.name )
+        self.server.insert(int_marker, self.processFeedback)
+        self.menu_handler.apply( self.server, int_marker.name )
 
 if __name__=="__main__":
     moveit_commander.roscpp_initialize(sys.argv)
     rospy.init_node('jaco_moving_target')
 
-    movingGoalplanner = MovingGoalPlanner()
+    movingGoalPlanner = MovingGoalPlanner()
 
-    movingGoalplanner.make6DofMarker( False, InteractiveMarkerControl.MOVE_ROTATE_3D, position, True )
+    movingGoalPlanner.make6DofMarker( False, InteractiveMarkerControl.MOVE_ROTATE_3D, True )
 
     movingGoalPlanner.jaco.home()
     
-    server.applyChanges()
+    movingGoalPlanner.server.applyChanges()
 
     rospy.spin()
     moveit_commander.roscpp_shutdown()
