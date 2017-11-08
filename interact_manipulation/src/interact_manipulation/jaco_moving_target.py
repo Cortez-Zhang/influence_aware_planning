@@ -6,33 +6,142 @@ from interactive_markers.menu_handler import *
 from visualization_msgs.msg import *
 import moveit_commander
 from jaco import JacoInterface
+from jaco_trajopt import CostFunction
 from geometry_msgs.msg import Point, PoseStamped
+
+class WaypointCostFunction(CostFunction):
+   """"Assigns cost proportional to the end effectors distance from waypoints"""
+
+    def __init__(self, robot, eef_link_name='j2s7s300_end_effector'):
+        CostFunction.__init__(self, params={'waypoint_1': 0.5,
+                                            'waypoint_2': 0.0,
+                                            'normalize_sigma': 1.0})
+
+        self.robot = robot
+        self.eef_link_name = eef_link_name
+        self._care_about_distance = .4
+
+        waypoint_1 = Pose()
+        waypoint_1.position.x = 0.4
+        waypoint_1.position.y = 0.4
+        waypoint_1.position.z = 0.85
+        waypoint_1.orientation.w = 1.0
+        waypoint_2 = Pose()
+        waypoint_2.position.x = 0.4
+        waypoint_2.position.y = -0.4
+        waypoint_2.position.z = 0.85
+        waypoint_2.orientation.w = 1.0
+        # self.waypoints = [waypoint_1, waypoint_2]
+        self.waypoints = [waypoint_1]
+
+    def get_cost(self, config):
+        """define the cost for a given configuration"""
+        q = config.tolist()
+        # q[2] += math.pi  # TODO this seems to be a bug in OpenRAVE?
+        self.robot.SetDOFValues(q + [0.0, 0.0, 0.0])
+        eef_link = self.robot.GetLink(self.eef_link_name)
+        if eef_link is None:
+            print("Error: end-effector \"{}\" does not exist".format(self.eef_link_name))
+            return 0.0
+
+        eef_pose = openravepy.poseFromMatrix(eef_link.GetTransform())
+
+        cost = 0.0
+        for i, waypoint in enumerate(self.waypoints):
+            # Get the (normalized) distance from the end-effector to the waypoint
+            distance = normalize_exp(self._dist(eef_pose, waypoint), sigma=self.params['normalize_sigma'])
+            if math.abs(distance) < self._care_about_distance
+                # assign cost inverse proportional to the distance squared 
+                # TODO swap this with something more principled
+                cost += self.params['waypoint_{}'.format(i + 1)] * 1/math.pow(d,2)
+                # c += self.params['waypoint_{}'.format(i + 1)] * self._dist(eef_pose, waypoint)
+
+        return cost
+
+    def _dist(self, eef_pose, waypoint):
+        return math.sqrt(math.pow(eef_pose[4] - waypoint.position.x, 2) +
+                         math.pow(eef_pose[5] - waypoint.position.y, 2) +
+                         math.pow(eef_pose[6] - waypoint.position.z, 2))
+
+    def get_waypoint_markers(self):
+        markers = MarkerArray()
+
+        for i, waypoint in enumerate(self.waypoints):
+            # Choose a random color for this body
+            color_r = random.random()
+            color_g = random.random()
+            color_b = random.random()
+
+            waypoint_marker = Marker()
+            waypoint_marker.header.frame_id = '/world'
+            waypoint_marker.header.stamp = rospy.get_rostime()
+            waypoint_marker.ns = '/waypoint'
+            waypoint_marker.id = i
+            waypoint_marker.type = Marker.SPHERE
+            waypoint_marker.pose = waypoint
+            waypoint_marker.scale.x = 0.1
+            waypoint_marker.scale.y = 0.1
+            waypoint_marker.scale.z = 0.1
+            waypoint_marker.color.r = color_r
+            waypoint_marker.color.g = color_g
+            waypoint_marker.color.b = color_b
+            waypoint_marker.color.a = 0.50
+            waypoint_marker.lifetime = rospy.Duration(0)
+            markers.markers.append(waypoint_marker)
+
+            text_marker = Marker()
+            text_marker.header.frame_id = '/world'
+            text_marker.header.stamp = rospy.get_rostime()
+            text_marker.ns = '/waypoint/text'
+            text_marker.id = i
+            text_marker.type = Marker.TEXT_VIEW_FACING
+            text_marker.pose = waypoint
+            text_marker.scale.z = 0.05
+            text_marker.color.r = color_r
+            text_marker.color.g = color_g
+            text_marker.color.b = color_b
+            text_marker.color.a = 0.50
+            text_marker.text = 'waypoint {}'.format(i + 1)
+            text_marker.lifetime = rospy.Duration(0)
+            markers.markers.append(text_marker)
+
+        return markers
 
 class MovingGoalPlanner():
     def __init__(self):
         self.server = InteractiveMarkerServer("basic_controls")
         self.menu_handler = MenuHandler()
-        self.jaco = JacoInterface()
-        self.menu_handler.insert( "Plan and Execute", callback=self.processFeedback )
+        self.jaco_interface = JacoInterface()
+        self.menu_handler.insert( "Plan and Execute", callback=self._plan_and_execute_callback )
         self.markerPosition = Point( 0.25, 0.25, 0.25)
+        self.waypoint_cost_func = WaypointCostFunction(self.jaco_interface.planner.jaco)
 
-    def processFeedback(self, feedback):
+    def _plan_and_execute_callback(self, feedback):
+
+        #print("starting pose {}").format(start_pose)
+        if feedback.event_type == InteractiveMarkerFeedback.MENU_SELECT:
+            self._plan_and_execute(self, feedback)
+        self.server.applyChanges()
+
+    def _plan_and_execute(self, feedback):
+        self.jaco_interface.planner.cost_functions = [self.waypoint_cost_func]
+        self.jaco_interface.planner.trajopt_num_waypoints = 15
 
         goal_pose = PoseStamped()
         goal_pose.header = feedback.header
         goal_pose.pose = feedback.pose
 
-        # Move the arm to the initial configuration
+        start_pose = self.jaco_interface.arm_group.get_current_pose()
+        rospy.loginfo("Requesting plan for start_pose {} goal_pose {}".format(start_pose, goal_pose))
 
-        #print("starting pose {}").format(start_pose)
-        if feedback.event_type == InteractiveMarkerFeedback.MENU_SELECT:
-            start_pose = self.jaco.arm_group.get_current_pose()
-            rospy.loginfo("Requesting plan for start_pose {} goal_pose {}".format(start_pose, goal_pose))
+        traj = self.jaco_interface.plan(start_pose, goal_pose)
 
-            traj = self.jaco.plan(start_pose, goal_pose)
-            #print("planned Trajectory {}").format(traj)
-            self.jaco.execute(traj)
+        self.jaco_interface.execute(traj)
+    def run(self):
+        self.make6DofMarker( False, InteractiveMarkerControl.MOVE_ROTATE_3D, True )
+        self.jaco_interface.home()
         self.server.applyChanges()
+        rospy.spin()
 
     def makeBox(self, msg):
         marker = Marker()
@@ -54,8 +163,10 @@ class MovingGoalPlanner():
         control.markers.append( self.makeBox(msg) )
         msg.controls.append( control )
         return control
+    
     # makes a marker which dynamically moves around
     def make6DofMarker(self, fixed, interaction_mode, show_6dof = False, scale = .1):
+       """make a marker which represents a goal"""
         int_marker = InteractiveMarker()
         int_marker.header.frame_id = "root"
         int_marker.pose.position = self.markerPosition
@@ -150,20 +261,12 @@ class MovingGoalPlanner():
                 control.orientation_mode = InteractiveMarkerControl.FIXED
             int_marker.controls.append(control)
 
-        self.server.insert(int_marker, self.processFeedback)
+        self.server.insert(int_marker, self._plan_and_execute_callback)
         self.menu_handler.apply( self.server, int_marker.name )
 
 if __name__=="__main__":
     moveit_commander.roscpp_initialize(sys.argv)
     rospy.init_node('jaco_moving_target')
-
-    movingGoalPlanner = MovingGoalPlanner()
-
-    movingGoalPlanner.make6DofMarker( False, InteractiveMarkerControl.MOVE_ROTATE_3D, True )
-
-    movingGoalPlanner.jaco.home()
-    
-    movingGoalPlanner.server.applyChanges()
-
-    rospy.spin()
+    human_aware_planner = MovingGoalPlanner()
+    human_aware_planner.run()
     moveit_commander.roscpp_shutdown()
