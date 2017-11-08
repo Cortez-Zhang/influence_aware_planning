@@ -1,17 +1,21 @@
 #!/usr/bin/python
-
+import math
+import openravepy
 import rospy
+import random
 from interactive_markers.interactive_marker_server import *
 from interactive_markers.menu_handler import *
 from visualization_msgs.msg import *
 import moveit_commander
 from jaco import JacoInterface
 from jaco_trajopt import CostFunction
-from geometry_msgs.msg import Point, PoseStamped
+from geometry_msgs.msg import Point, PoseStamped, Pose
+
+def normalize_exp(x, sigma):
+    """ Normalizes the value using an exponential """
+    return 1.0 - math.exp(-math.pow(x, 2) / sigma)
 
 class WaypointCostFunction(CostFunction):
-   """"Assigns cost proportional to the end effectors distance from waypoints"""
-
     def __init__(self, robot, eef_link_name='j2s7s300_end_effector'):
         CostFunction.__init__(self, params={'waypoint_1': 0.5,
                                             'waypoint_2': 0.0,
@@ -50,10 +54,10 @@ class WaypointCostFunction(CostFunction):
         for i, waypoint in enumerate(self.waypoints):
             # Get the (normalized) distance from the end-effector to the waypoint
             distance = normalize_exp(self._dist(eef_pose, waypoint), sigma=self.params['normalize_sigma'])
-            if math.abs(distance) < self._care_about_distance
+            if abs(distance) < self._care_about_distance:
                 # assign cost inverse proportional to the distance squared 
                 # TODO swap this with something more principled
-                cost += self.params['waypoint_{}'.format(i + 1)] * 1/math.pow(d,2)
+                cost += self.params['waypoint_{}'.format(i + 1)] * 1/math.pow(distance,2)
                 # c += self.params['waypoint_{}'.format(i + 1)] * self._dist(eef_pose, waypoint)
 
         return cost
@@ -120,7 +124,7 @@ class MovingGoalPlanner():
 
         #print("starting pose {}").format(start_pose)
         if feedback.event_type == InteractiveMarkerFeedback.MENU_SELECT:
-            self._plan_and_execute(self, feedback)
+            self._plan_and_execute(feedback)
         self.server.applyChanges()
 
     def _plan_and_execute(self, feedback):
@@ -132,9 +136,12 @@ class MovingGoalPlanner():
         goal_pose.pose = feedback.pose
 
         start_pose = self.jaco_interface.arm_group.get_current_pose()
-        rospy.loginfo("Requesting plan for start_pose {} goal_pose {}".format(start_pose, goal_pose))
+        rospy.loginfo("Requesting plan from start_pose:\n {} \n goal_pose:\n {}".format(start_pose, goal_pose))
 
         traj = self.jaco_interface.plan(start_pose, goal_pose)
+
+        m = self.waypoint_cost_func.get_waypoint_markers()
+        self.jaco_interface.marker_array_pub.publish(m)
 
         self.jaco_interface.execute(traj)
     def run(self):
@@ -166,7 +173,6 @@ class MovingGoalPlanner():
     
     # makes a marker which dynamically moves around
     def make6DofMarker(self, fixed, interaction_mode, show_6dof = False, scale = .1):
-       """make a marker which represents a goal"""
         int_marker = InteractiveMarker()
         int_marker.header.frame_id = "root"
         int_marker.pose.position = self.markerPosition
