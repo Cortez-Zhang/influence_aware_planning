@@ -13,20 +13,17 @@ menu_handler = MenuHandler()
 jaco = None
 
 def processFeedback( feedback ):
-    print("In processFeedback")
     goal_pose = PoseStamped()
     goal_pose.header = feedback.header
     goal_pose.pose = feedback.pose
 
-    # Move the arm to the initial configuration
-    start_pose = jaco.arm_group.get_current_pose()
-    #print("starting pose {}").format(start_pose)
-
     if feedback.event_type == InteractiveMarkerFeedback.MENU_SELECT:
-        print("goal pose {}").format(goal_pose)
+        
+        start_pose = jaco.arm_group.get_current_pose()
+        rospy.loginfo(("Requesting plan for start: %s Goal: %s").format(start_pose, goal_pose))
 
         traj = jaco.plan(start_pose, goal_pose)
-        print("planned Trajectory {}").format(traj)
+        #print("planned Trajectory {}").format(traj)
         jaco.execute(traj)
 
     server.applyChanges()
@@ -56,7 +53,7 @@ def make6DofMarker( fixed, interaction_mode, position, show_6dof = False):
     int_marker = InteractiveMarker()
     int_marker.header.frame_id = "root"
     int_marker.pose.position = position
-    int_marker.scale = 1
+    int_marker.scale = .1
 
     int_marker.name = "simple_6dof"
     int_marker.description = "Simple 6-DOF Control"

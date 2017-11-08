@@ -18,7 +18,7 @@ class JacoTrajopt:
         package_path = rospack.get_path('interact_manipulation')
         jaco_urdf_path = package_path + '/config/jaco.urdf'
         jaco_srdf_path = package_path + '/config/jaco.srdf'
-        print("Loading Jaco URDF from {} and SRDF from {}...".format(jaco_urdf_path,
+        rospy.loginfo("Loading Jaco URDF from {} and SRDF from {}...".format(jaco_urdf_path,
                                                                      jaco_srdf_path))
 
         urdf_module = openravepy.RaveCreateModule(self.env, 'urdf')
@@ -36,7 +36,7 @@ class JacoTrajopt:
 
     def plan(self, start_config, goal_config):
         """ Plan from a start configuration to goal configuration """
-        print("Planning from config {} to {}...".format(start_config,
+        rospy.logdebug("Planning from config {} to {}...".format(start_config,
                                                         goal_config))
         # print(self.jaco.GetDOFValues())
         self.jaco.SetDOFValues(start_config + self.finger_joint_values)
@@ -71,7 +71,7 @@ class JacoTrajopt:
         t_start = time.time()
         result = trajoptpy.OptimizeProblem(prob)  # do optimization
         t_elapsed = time.time() - t_start
-        print("Planning took {} seconds".format(t_elapsed))
+        rospy.logdebug("Planning took {} seconds".format(t_elapsed))
         print(result)
         return self._to_trajectory_msg(result.GetTraj())
 

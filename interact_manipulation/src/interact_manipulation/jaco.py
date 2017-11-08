@@ -102,17 +102,16 @@ class JacoInterface:
         res = self.ik(start_pose)
         start_config = [q for q in res.solution.joint_state.position[0:7]]
 
-        print("start config = {}, goal config = {}".format(start_config, goal_config))
-
+        rospy.loginfo("Planning trajopt path from start {},to goal {}".format(start_config, goal_config))
         # Plan a trajectory with trajopt
         traj = self.planner.plan(start_config, goal_config)
-        print(traj)
+        #print(traj)
 
         return traj
 
     def execute(self, traj, wait=True, display=True):
         """ Execute the trajectory on the robot arm """
-
+        rospy.loginfo("Executing trajectory")
         if display:
             # Display the planned trajectory
             display_traj = DisplayTrajectory()
