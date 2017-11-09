@@ -12,7 +12,7 @@ from visualization_msgs.msg import *
 import moveit_commander
 from jaco import JacoInterface
 from jaco_trajopt import CostFunction
-from geometry_msgs.msg import Point, PoseStamped, Pose
+from geometry_msgs.msg import Point, PoseStamped, Pose, Quaternion
 from tf import TransformBroadcaster, TransformListener
 from math import sin
 
@@ -30,7 +30,7 @@ class Human(InteractiveMarkerAgent):
 
         self.start_human_sub = rospy.Subscriber("start_human",Empty, self._start_human)
         self.reset_human_sub = rospy.Subscriber("reset_human",Empty, self._reset_human)
-        self.human_state_pub = rospy.Publisher("human_state",Point, queue_size=10)
+        self.human_state_pub = rospy.Publisher("human_state",Pose, queue_size=10)
 
     def _onclick_callback(self, feedback):
         pass
@@ -46,7 +46,7 @@ class Human(InteractiveMarkerAgent):
         #rospy.loginfo("moving Frame: {} static frame: {} translation: {}".format(self._moving_frame, self._base_frame, translation))
         self.counter += 1
 
-        self.human_state_pub.publish(translation)
+        self.human_state_pub.publish(Pose(translation,Quaternion(0,0,0,1)))
         return translation
     
     def _reset_human(self, emptyMsg):

@@ -11,9 +11,10 @@ from visualization_msgs.msg import *
 import moveit_commander
 from jaco import JacoInterface
 from jaco_trajopt import CostFunction
-from geometry_msgs.msg import Point, PoseStamped, Pose
+from geometry_msgs.msg import Point, PoseStamped, Pose, Quaternion
 from tf import TransformBroadcaster, TransformListener
 from math import sin
+from std_msgs.msg import Empty
 
 def normalize_exp(x, sigma):
     """ Normalizes the value using an exponential """
@@ -21,26 +22,22 @@ def normalize_exp(x, sigma):
 
 class WaypointCostFunction(CostFunction):
     def __init__(self, robot, eef_link_name='j2s7s300_end_effector'):
-        CostFunction.__init__(self, params={'waypoint_1': 0.5,
-                                            'waypoint_2': 0.0,
+        CostFunction.__init__(self, params={'hit_human_penalty': 0.5,
                                             'normalize_sigma': 1.0})
 
         self.robot = robot
+        self.hit_human_penalty = .5
         self.eef_link_name = eef_link_name
         self._care_about_distance = .1
+        self.tf_listener = TransformListener()    
+        self.human_pose = Pose(Point(0.4,0.4,0.85),Quaternion(0,0,0,1))
 
-        waypoint_1 = Pose()
-        waypoint_1.position.x = 0.4
-        waypoint_1.position.y = 0.4
-        waypoint_1.position.z = 0.85
-        waypoint_1.orientation.w = 1.0
-        waypoint_2 = Pose()
-        waypoint_2.position.x = 0.4
-        waypoint_2.position.y = -0.4
-        waypoint_2.position.z = 0.85
-        waypoint_2.orientation.w = 1.0
-        # self.waypoints = [waypoint_1, waypoint_2]
-        self.waypoints = [waypoint_1]
+        self.human_position_sub = rospy.Subscriber("human_state", Pose, self._get_position)
+
+    def _get_position(self, human_pose):
+        pass
+        #self.human_pose = human_pose
+        #rospy.loginfo("current pose {}".format(human_pose))
 
     def get_cost(self, config):
         """define the cost for a given configuration"""
@@ -55,66 +52,65 @@ class WaypointCostFunction(CostFunction):
         eef_pose = openravepy.poseFromMatrix(eef_link.GetTransform())
 
         cost = 0.0
-        for i, waypoint in enumerate(self.waypoints):
-            # Get the (normalized) distance from the end-effector to the waypoint
-            distance = normalize_exp(self._dist(eef_pose, waypoint), sigma=self.params['normalize_sigma'])
-            if abs(distance) < self._care_about_distance:
-                # assign cost inverse proportional to the distance squared 
-                # TODO swap this with something more principled
-                cost += self.params['waypoint_{}'.format(i + 1)] * 1/math.pow(distance,2)
-                # c += self.params['waypoint_{}'.format(i + 1)] * self._dist(eef_pose, waypoint)
-
+        # Get the (normalized) distance from the end-effector to the waypoint
+        distance = normalize_exp(self._dist(eef_pose, self.human_pose), sigma=self.params['normalize_sigma'])
+        if abs(distance) < self._care_about_distance:
+            # assign cost inverse proportional to the distance squared 
+            # TODO swap this with something more principled
+            cost += self.params['hit_human_penalty'] * 1/math.pow(distance,2)
         return cost
 
     def _dist(self, eef_pose, waypoint):
-        return math.sqrt(math.pow(eef_pose[4] - waypoint.position.x, 2) +
-                         math.pow(eef_pose[5] - waypoint.position.y, 2) +
-                         math.pow(eef_pose[6] - waypoint.position.z, 2))
+        (trans,rot) = self.tf_listener.lookupTransform('/root', '/moving_frame', rospy.Time.now())
+
+        self.human.pose = Pose(Point(trans),Quaternion(rot))
+        return math.sqrt(math.pow(eef_pose[4] - self.human_pose.position.x, 2) +
+                         math.pow(eef_pose[5] - self.human_pose.position.y, 2) +
+                         math.pow(eef_pose[6] - self.human_pose.position.z, 2))
 
     def get_waypoint_markers(self):
         markers = MarkerArray()
 
-        for i, waypoint in enumerate(self.waypoints):
-            # Choose a random color for this body
-            color_r = random.random()
-            color_g = random.random()
-            color_b = random.random()
+        # Choose a random color for this body
+        color_r = random.random()
+        color_g = random.random()
+        color_b = random.random()
+        rospy.loginfo("current pose {}".format(self.human_pose))
+        waypoint_marker = Marker()
+        waypoint_marker.header.frame_id = '/world'
+        waypoint_marker.header.stamp = rospy.get_rostime()
+        waypoint_marker.ns = '/waypoint'
+        waypoint_marker.id = 1
+        waypoint_marker.type = Marker.SPHERE
+        waypoint_marker.pose = self.human_pose
+        waypoint_marker.scale.x = 0.1
+        waypoint_marker.scale.y = 0.1
+        waypoint_marker.scale.z = 0.1
+        waypoint_marker.color.r = color_r
+        waypoint_marker.color.g = color_g
+        waypoint_marker.color.b = color_b
+        waypoint_marker.color.a = 0.50
+        waypoint_marker.lifetime = rospy.Duration(0)
+        markers.markers.append(waypoint_marker)
 
-            waypoint_marker = Marker()
-            waypoint_marker.header.frame_id = '/world'
-            waypoint_marker.header.stamp = rospy.get_rostime()
-            waypoint_marker.ns = '/waypoint'
-            waypoint_marker.id = i
-            waypoint_marker.type = Marker.SPHERE
-            waypoint_marker.pose = waypoint
-            waypoint_marker.scale.x = 0.1
-            waypoint_marker.scale.y = 0.1
-            waypoint_marker.scale.z = 0.1
-            waypoint_marker.color.r = color_r
-            waypoint_marker.color.g = color_g
-            waypoint_marker.color.b = color_b
-            waypoint_marker.color.a = 0.50
-            waypoint_marker.lifetime = rospy.Duration(0)
-            markers.markers.append(waypoint_marker)
-
-            text_marker = Marker()
-            text_marker.header.frame_id = '/world'
-            text_marker.header.stamp = rospy.get_rostime()
-            text_marker.ns = '/waypoint/text'
-            text_marker.id = i
-            text_marker.type = Marker.TEXT_VIEW_FACING
-            text_marker.pose = waypoint
-            text_marker.scale.z = 0.05
-            text_marker.color.r = color_r
-            text_marker.color.g = color_g
-            text_marker.color.b = color_b
-            text_marker.color.a = 0.50
-            text_marker.text = 'waypoint {}'.format(i + 1)
-            text_marker.lifetime = rospy.Duration(0)
-            markers.markers.append(text_marker)
+        text_marker = Marker()
+        text_marker.header.frame_id = '/world'
+        text_marker.header.stamp = rospy.get_rostime()
+        text_marker.ns = '/waypoint/text'
+        text_marker.id = 1
+        text_marker.type = Marker.TEXT_VIEW_FACING
+        text_marker.pose = self.human_pose
+        text_marker.scale.z = 0.05
+        text_marker.color.r = color_r
+        text_marker.color.g = color_g
+        text_marker.color.b = color_b
+        text_marker.color.a = 0.50
+        text_marker.text = 'planning around human located here'
+        text_marker.lifetime = rospy.Duration(0)
+        markers.markers.append(text_marker)
 
         return markers
-
+    
 class InteractiveMarkerAgent():
     def __init__(self, server_name, position, menu_labels=[], base_frame = "root", scale = .25):
         self._scale = scale
@@ -151,68 +147,6 @@ class InteractiveMarkerAgent():
         msg.controls.append( control )
         return control
 
-class Human(InteractiveMarkerAgent):
-    def __init__(self, moving_frame="moving_frame"):
-        initial_position = Point(0,0,0)
-        InteractiveMarkerAgent.__init__(self, "Human", initial_position)
-        self._moving_frame = moving_frame
-        self.br = TransformBroadcaster()
-        self.counter = 0
-
-        self.makeMovingMarker()
-        self.server.applyChanges()
-        self.Timer = rospy.Timer(rospy.Duration(0.01), self._update_human_callback)
-        self.Pub = rospy.Publisher('chatter', String, queue_size=10)
-
-    def _onclick_callback(self, feedback):
-        pass
-    
-    def _update_human_callback(self, msg):
-        #rospy.loginfo("In update human callback")
-        self.get_simulated_human_state()
-
-    def get_simulated_human_state(self):
-        time = rospy.Time.now()
-        translation = (0, 0, sin(self.counter/140.0)*2.0)
-        self.br.sendTransform(translation , (0, 0, 0, 1.0), time, self._moving_frame, self._base_frame )
-        #rospy.loginfo("moving Frame: {} static frame: {} translation: {}".format(self._moving_frame, self._base_frame, translation))
-        self.counter += 1
-        return translation
-    
-    def reset_human(self):
-        rospy.loginfo("resetting Human")
-        self.counter = 0
-        self.Timer.shutdown()
-    
-    def start_human(self):
-        rospy.loginfo("Starting Human")
-        self.counter = 0
-        self.Timer = rospy.Timer(rospy.Duration(0.01), self._update_human_callback)
-
-    def makeMovingMarker(self):
-        int_marker = InteractiveMarker()
-        int_marker.header.frame_id = self._moving_frame
-        int_marker.pose.position = self.marker_position
-        int_marker.scale = self._scale
-
-        int_marker.name = "Human"
-        int_marker.description = "Simulated"
-
-        control = InteractiveMarkerControl()
-        control.orientation.w = 1
-        control.orientation.x = 1
-        control.orientation.y = 0
-        control.orientation.z = 0
-        control.interaction_mode = InteractiveMarkerControl.ROTATE_AXIS
-        int_marker.controls.append(copy.deepcopy(control))
-
-        control.interaction_mode = InteractiveMarkerControl.MOVE_PLANE
-        control.always_visible = True
-        control.markers.append( self.makeBox(int_marker) )
-        int_marker.controls.append(control)
-
-        self.server.insert(int_marker, self._onclick_callback)
-
 class AssertiveRobotPlanner(InteractiveMarkerAgent):
     def __init__(self):
         initial_position = Point(0,0,0)
@@ -224,19 +158,22 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
 
         self.jaco_interface = JacoInterface()
         self.waypoint_cost_func = WaypointCostFunction(self.jaco_interface.planner.jaco)
-        self.human = Human()
 
         self.make6DofMarker(False, InteractiveMarkerControl.MOVE_ROTATE_3D, True )
         self.server.applyChanges()
 
+        self.start_human_pub = rospy.Publisher("start_human", Empty, queue_size=10)
+        self.reset_human_pub = rospy.Publisher("reset_human", Empty, queue_size=10)
+
     def _onclick_callback(self, feedback):
         if feedback.event_type == InteractiveMarkerFeedback.MENU_SELECT:
             if feedback.menu_entry_id == 1:
-                self.human.start_human()
+                self.start_human_pub.publish(Empty())
+                #Publish empty message to start human topic
                 self._plan_and_execute(feedback)
 
             elif feedback.menu_entry_id == 2:
-                self.human.reset_human()
+                self.reset_human_pub.publish(Empty())
             elif feedback.menu_entry_id == 3:
                 self.jaco_interface.home()
 
