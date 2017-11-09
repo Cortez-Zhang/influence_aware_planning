@@ -3,6 +3,8 @@ import math
 import openravepy
 import rospy
 import random
+import copy
+
 from interactive_markers.interactive_marker_server import *
 from interactive_markers.menu_handler import *
 from visualization_msgs.msg import *
@@ -10,6 +12,8 @@ import moveit_commander
 from jaco import JacoInterface
 from jaco_trajopt import CostFunction
 from geometry_msgs.msg import Point, PoseStamped, Pose
+from tf import TransformBroadcaster, TransformListener
+from math import sin
 
 def normalize_exp(x, sigma):
     """ Normalizes the value using an exponential """
@@ -23,7 +27,7 @@ class WaypointCostFunction(CostFunction):
 
         self.robot = robot
         self.eef_link_name = eef_link_name
-        self._care_about_distance = .4
+        self._care_about_distance = .1
 
         waypoint_1 = Pose()
         waypoint_1.position.x = 0.4
@@ -116,15 +120,32 @@ class MovingGoalPlanner():
         self.server = InteractiveMarkerServer("basic_controls")
         self.menu_handler = MenuHandler()
         self.jaco_interface = JacoInterface()
+        
         self.menu_handler.insert( "Plan and Execute", callback=self._plan_and_execute_callback )
+        self.menu_handler.insert( "Reset Human", callback=self._plan_and_execute_callback )
+        #self.menu_handler.insert( "Start Human", callback=self._plan_and_execute_callback )
+        
         self.markerPosition = Point( 0.25, 0.25, 0.25)
         self.waypoint_cost_func = WaypointCostFunction(self.jaco_interface.planner.jaco)
+        self._reset = False
+        self._paused = False
+        self.br = TransformBroadcaster()
+        self.listener = TransformListener()
+        self.counter = 0
 
     def _plan_and_execute_callback(self, feedback):
-
         #print("starting pose {}").format(start_pose)
         if feedback.event_type == InteractiveMarkerFeedback.MENU_SELECT:
-            self._plan_and_execute(feedback)
+            if feedback.menu_entry_id == 1:
+                rospy.loginfo("Starting Human")
+                self._paused = False
+                self._reset = False
+                self._plan_and_execute(feedback)
+
+            elif feedback.menu_entry_id == 2:
+                rospy.loginfo("Resetting Human")
+                self._reset = True
+
         self.server.applyChanges()
 
     def _plan_and_execute(self, feedback):
@@ -144,10 +165,27 @@ class MovingGoalPlanner():
         self.jaco_interface.marker_array_pub.publish(m)
 
         self.jaco_interface.execute(traj)
-    def run(self):
+    
+    def frameCallback(self, msg ):
+        if not self._paused:
+            if self._reset:
+                self.counter = 0
+                self._paused = True
+            time = rospy.Time.now()
+            self.br.sendTransform( (0, 0, sin(self.counter/140.0)*2.0), (0, 0, 0, 1.0), time, "moving_frame", "root" )
+            #rospy.loginfo("Current moving frame translation: {}".format(trans))
+            self.counter += 1
+
+    def run(self):        
         self.make6DofMarker( False, InteractiveMarkerControl.MOVE_ROTATE_3D, True )
         self.jaco_interface.home()
+        
+        position = Point(0, -3, 0)
+        self.makeMovingMarker( position )
         self.server.applyChanges()
+
+        rospy.Timer(rospy.Duration(0.01), self.frameCallback)
+
         rospy.spin()
 
     def makeBox(self, msg):
@@ -164,13 +202,36 @@ class MovingGoalPlanner():
         return marker
 
     def makeBoxControl(self, msg):
-
         control = InteractiveMarkerControl()
         control.always_visible = True
         control.markers.append( self.makeBox(msg) )
         msg.controls.append( control )
         return control
     
+    def makeMovingMarker(self, position):
+        int_marker = InteractiveMarker()
+        int_marker.header.frame_id = "moving_frame"
+        int_marker.pose.position = position
+        int_marker.scale = 1
+
+        int_marker.name = "moving"
+        int_marker.description = "Marker Attached to a\nMoving Frame"
+
+        control = InteractiveMarkerControl()
+        control.orientation.w = 1
+        control.orientation.x = 1
+        control.orientation.y = 0
+        control.orientation.z = 0
+        control.interaction_mode = InteractiveMarkerControl.ROTATE_AXIS
+        int_marker.controls.append(copy.deepcopy(control))
+
+        control.interaction_mode = InteractiveMarkerControl.MOVE_PLANE
+        control.always_visible = True
+        control.markers.append( self.makeBox(int_marker) )
+        int_marker.controls.append(control)
+
+        self.server.insert(int_marker, self._plan_and_execute_callback)
+
     # makes a marker which dynamically moves around
     def make6DofMarker(self, fixed, interaction_mode, show_6dof = False, scale = .1):
         int_marker = InteractiveMarker()
