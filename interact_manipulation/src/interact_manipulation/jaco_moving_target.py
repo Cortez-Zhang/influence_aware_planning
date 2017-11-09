@@ -115,36 +115,130 @@ class WaypointCostFunction(CostFunction):
 
         return markers
 
-class MovingGoalPlanner():
-    def __init__(self):
-        self.server = InteractiveMarkerServer("basic_controls")
+class InteractiveMarkerAgent():
+    def __init__(self, server_name, position, menu_labels=[], base_frame = "root", scale = .25):
+        self._scale = scale
+        self.server = InteractiveMarkerServer(server_name)
         self.menu_handler = MenuHandler()
-        self.jaco_interface = JacoInterface()
-        
-        self.menu_handler.insert( "Plan and Execute", callback=self._plan_and_execute_callback )
-        self.menu_handler.insert( "Reset Human", callback=self._plan_and_execute_callback )
-        #self.menu_handler.insert( "Start Human", callback=self._plan_and_execute_callback )
-        
-        self.markerPosition = Point( 0.25, 0.25, 0.25)
-        self.waypoint_cost_func = WaypointCostFunction(self.jaco_interface.planner.jaco)
-        self._reset = False
-        self._paused = False
+        self.menu_labels = menu_labels
+        self.setup_menu_handler()
+        self.marker_position = Point(position.x, position.y, position.z)
+        self._base_frame = base_frame
+
+    def setup_menu_handler(self):
+        for menu_label in self.menu_labels:
+            self.menu_handler.insert(menu_label, callback=self._onclick_callback )
+
+    def _onclick_callback(self, feedback):
+        pass
+    
+    def makeBox(self, msg):
+        marker = Marker()
+        marker.type = Marker.CUBE
+        marker.scale.x = msg.scale * 0.45
+        marker.scale.y = msg.scale * 0.45
+        marker.scale.z = msg.scale * 0.45
+        marker.color.r = 0.5
+        marker.color.g = 0.5
+        marker.color.b = 0.5
+        marker.color.a = 1.0
+        return marker
+
+    def makeBoxControl(self, msg):
+        control = InteractiveMarkerControl()
+        control.always_visible = True
+        control.markers.append( self.makeBox(msg) )
+        msg.controls.append( control )
+        return control
+
+class Human(InteractiveMarkerAgent):
+    def __init__(self, moving_frame="moving_frame"):
+        initial_position = Point(0,0,0)
+        InteractiveMarkerAgent.__init__(self, "Human", initial_position)
+        self._moving_frame = moving_frame
         self.br = TransformBroadcaster()
-        self.listener = TransformListener()
         self.counter = 0
 
-    def _plan_and_execute_callback(self, feedback):
-        #print("starting pose {}").format(start_pose)
+        self.makeMovingMarker()
+        self.server.applyChanges()
+        self.Timer = rospy.Timer(rospy.Duration(0.01), self._update_human_callback)
+        self.Pub = rospy.Publisher('chatter', String, queue_size=10)
+
+    def _onclick_callback(self, feedback):
+        pass
+    
+    def _update_human_callback(self, msg):
+        #rospy.loginfo("In update human callback")
+        self.get_simulated_human_state()
+
+    def get_simulated_human_state(self):
+        time = rospy.Time.now()
+        translation = (0, 0, sin(self.counter/140.0)*2.0)
+        self.br.sendTransform(translation , (0, 0, 0, 1.0), time, self._moving_frame, self._base_frame )
+        #rospy.loginfo("moving Frame: {} static frame: {} translation: {}".format(self._moving_frame, self._base_frame, translation))
+        self.counter += 1
+        return translation
+    
+    def reset_human(self):
+        rospy.loginfo("resetting Human")
+        self.counter = 0
+        self.Timer.shutdown()
+    
+    def start_human(self):
+        rospy.loginfo("Starting Human")
+        self.counter = 0
+        self.Timer = rospy.Timer(rospy.Duration(0.01), self._update_human_callback)
+
+    def makeMovingMarker(self):
+        int_marker = InteractiveMarker()
+        int_marker.header.frame_id = self._moving_frame
+        int_marker.pose.position = self.marker_position
+        int_marker.scale = self._scale
+
+        int_marker.name = "Human"
+        int_marker.description = "Simulated"
+
+        control = InteractiveMarkerControl()
+        control.orientation.w = 1
+        control.orientation.x = 1
+        control.orientation.y = 0
+        control.orientation.z = 0
+        control.interaction_mode = InteractiveMarkerControl.ROTATE_AXIS
+        int_marker.controls.append(copy.deepcopy(control))
+
+        control.interaction_mode = InteractiveMarkerControl.MOVE_PLANE
+        control.always_visible = True
+        control.markers.append( self.makeBox(int_marker) )
+        int_marker.controls.append(control)
+
+        self.server.insert(int_marker, self._onclick_callback)
+
+class AssertiveRobotPlanner(InteractiveMarkerAgent):
+    def __init__(self):
+        initial_position = Point(0,0,0)
+        menu_label_list = []
+        menu_label_list.append("Plan and Execute")
+        menu_label_list.append("Reset Human")
+        menu_label_list.append("Reset Robot")
+        InteractiveMarkerAgent.__init__(self, "End_Goal", initial_position, menu_labels=menu_label_list)
+
+        self.jaco_interface = JacoInterface()
+        self.waypoint_cost_func = WaypointCostFunction(self.jaco_interface.planner.jaco)
+        self.human = Human()
+
+        self.make6DofMarker(False, InteractiveMarkerControl.MOVE_ROTATE_3D, True )
+        self.server.applyChanges()
+
+    def _onclick_callback(self, feedback):
         if feedback.event_type == InteractiveMarkerFeedback.MENU_SELECT:
             if feedback.menu_entry_id == 1:
-                rospy.loginfo("Starting Human")
-                self._paused = False
-                self._reset = False
+                self.human.start_human()
                 self._plan_and_execute(feedback)
 
             elif feedback.menu_entry_id == 2:
-                rospy.loginfo("Resetting Human")
-                self._reset = True
+                self.human.reset_human()
+            elif feedback.menu_entry_id == 3:
+                self.jaco_interface.home()
 
         self.server.applyChanges()
 
@@ -165,79 +259,17 @@ class MovingGoalPlanner():
         self.jaco_interface.marker_array_pub.publish(m)
 
         self.jaco_interface.execute(traj)
-    
-    def frameCallback(self, msg ):
-        if not self._paused:
-            if self._reset:
-                self.counter = 0
-                self._paused = True
-            time = rospy.Time.now()
-            self.br.sendTransform( (0, 0, sin(self.counter/140.0)*2.0), (0, 0, 0, 1.0), time, "moving_frame", "root" )
-            #rospy.loginfo("Current moving frame translation: {}".format(trans))
-            self.counter += 1
 
     def run(self):        
-        self.make6DofMarker( False, InteractiveMarkerControl.MOVE_ROTATE_3D, True )
         self.jaco_interface.home()
-        
-        position = Point(0, -3, 0)
-        self.makeMovingMarker( position )
-        self.server.applyChanges()
-
-        rospy.Timer(rospy.Duration(0.01), self.frameCallback)
 
         rospy.spin()
 
-    def makeBox(self, msg):
-        marker = Marker()
-        marker.type = Marker.CUBE
-        marker.scale.x = msg.scale * 0.45
-        marker.scale.y = msg.scale * 0.45
-        marker.scale.z = msg.scale * 0.45
-        marker.color.r = 0.5
-        marker.color.g = 0.5
-        marker.color.b = 0.5
-        marker.color.a = 1.0
-
-        return marker
-
-    def makeBoxControl(self, msg):
-        control = InteractiveMarkerControl()
-        control.always_visible = True
-        control.markers.append( self.makeBox(msg) )
-        msg.controls.append( control )
-        return control
-    
-    def makeMovingMarker(self, position):
+    def make6DofMarker(self, fixed, interaction_mode, show_6dof = False):
         int_marker = InteractiveMarker()
-        int_marker.header.frame_id = "moving_frame"
-        int_marker.pose.position = position
-        int_marker.scale = 1
-
-        int_marker.name = "moving"
-        int_marker.description = "Marker Attached to a\nMoving Frame"
-
-        control = InteractiveMarkerControl()
-        control.orientation.w = 1
-        control.orientation.x = 1
-        control.orientation.y = 0
-        control.orientation.z = 0
-        control.interaction_mode = InteractiveMarkerControl.ROTATE_AXIS
-        int_marker.controls.append(copy.deepcopy(control))
-
-        control.interaction_mode = InteractiveMarkerControl.MOVE_PLANE
-        control.always_visible = True
-        control.markers.append( self.makeBox(int_marker) )
-        int_marker.controls.append(control)
-
-        self.server.insert(int_marker, self._plan_and_execute_callback)
-
-    # makes a marker which dynamically moves around
-    def make6DofMarker(self, fixed, interaction_mode, show_6dof = False, scale = .1):
-        int_marker = InteractiveMarker()
-        int_marker.header.frame_id = "root"
-        int_marker.pose.position = self.markerPosition
-        int_marker.scale = scale
+        int_marker.header.frame_id = self._base_frame
+        int_marker.pose.position = self.marker_position
+        int_marker.scale = self._scale
 
         int_marker.name = "simple_6dof"
         int_marker.description = "Simple 6-DOF Control"
@@ -328,12 +360,12 @@ class MovingGoalPlanner():
                 control.orientation_mode = InteractiveMarkerControl.FIXED
             int_marker.controls.append(control)
 
-        self.server.insert(int_marker, self._plan_and_execute_callback)
+        self.server.insert(int_marker, self._onclick_callback)
         self.menu_handler.apply( self.server, int_marker.name )
-
+    
 if __name__=="__main__":
     moveit_commander.roscpp_initialize(sys.argv)
     rospy.init_node('jaco_moving_target')
-    human_aware_planner = MovingGoalPlanner()
+    human_aware_planner = AssertiveRobotPlanner()
     human_aware_planner.run()
     moveit_commander.roscpp_shutdown()
