@@ -99,13 +99,16 @@ class JacoInterface:
         # Run IK to find the start and goal configuration from the goal pose
         res = self.ik(goal_pose)
         goal_config = [q for q in res.solution.joint_state.position[0:7]]
+        if not goal_config:
+            rospy.logerr("Inverse kinematics returned empty, No solution foudn")
+            traj = None
+        else:
+            res = self.ik(start_pose)
+            start_config = [q for q in res.solution.joint_state.position[0:7]]
 
-        res = self.ik(start_pose)
-        start_config = [q for q in res.solution.joint_state.position[0:7]]
-
-        rospy.loginfo("Planning trajopt path from start {},to goal {}".format(start_config, goal_config))
-        # Plan a trajectory with trajopt
-        traj = self.planner.plan(start_config, goal_config)
+            rospy.loginfo("Planning trajopt path from start {},to goal {}".format(start_config, goal_config))
+            # Plan a trajectory with trajopt
+            traj = self.planner.plan(start_config, goal_config)
         #print(traj)
 
         return traj
@@ -165,16 +168,17 @@ class JacoInterface:
 
     def execute(self, traj, wait=True, display=True):
         """ Execute the trajectory on the robot arm """
-        rospy.loginfo("Executing trajectory")
-        if display:
-            # Display the planned trajectory
-            display_traj = DisplayTrajectory()
-            display_traj.trajectory_start = self.robot.get_current_state()
-            display_traj.trajectory.append(traj)
-            self.display_trajectory_pub.publish(display_traj)
+        if traj:
+            rospy.loginfo("Executing trajectory")
+            if display:
+                # Display the planned trajectory
+                display_traj = DisplayTrajectory()
+                display_traj.trajectory_start = self.robot.get_current_state()
+                display_traj.trajectory.append(traj)
+                self.display_trajectory_pub.publish(display_traj)
 
-        # Execute the trajectory
-        self.arm_group.execute(traj, wait=wait)
+            # Execute the trajectory
+            self.arm_group.execute(traj, wait=wait)
 
     def home(self):
         initial_joints = self.home_pose
