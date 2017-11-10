@@ -164,15 +164,17 @@ class JacoInterface:
 
         return traj
 
+    def display_trajectory(self, traj):
+        """ Displays a planned trajectory """
+
+        # Display the planned trajectory
+        display_traj = DisplayTrajectory()
+        display_traj.trajectory_start = self.robot.get_current_state()
+        display_traj.trajectory.append(traj)
+        self.display_trajectory_pub.publish(display_traj)
+
     def execute(self, traj, wait=True, display=True):
         """ Execute the trajectory on the robot arm """
-
-        if display:
-            # Display the planned trajectory
-            display_traj = DisplayTrajectory()
-            display_traj.trajectory_start = self.robot.get_current_state()
-            display_traj.trajectory.append(traj)
-            self.display_trajectory_pub.publish(display_traj)
 
         # Execute the trajectory
         self.arm_group.execute(traj, wait=wait)

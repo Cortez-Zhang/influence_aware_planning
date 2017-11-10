@@ -21,13 +21,35 @@ class CostFunction:
 
     __metaclass__ = ABCMeta
 
-    def __init__(self, params):
-        self.params = params
+    METHOD_NUMERICAL = "numerical"
+    METHOD_ANALYTIC = "analytic"
+
+    def __init__(self, theta, type="ABS", diffmethod=METHOD_NUMERICAL):
+        self.theta = theta
+        self.type = type
+        self.diffmethod = diffmethod
 
     @abstractmethod
+    def get_name(self):
+        pass
+
+    @abstractmethod
+    def get_feature(self, config):
+        """ Returns the feature vector of the robot at this configuration """
+        pass
+
+    @abstractmethod
+    def get_feature_jacobian(self, config):
+        pass
+
     def get_cost(self, config):
         """ Returns the cost incurred at the specified configuration """
-        pass
+        phi = self.get_feature(config)
+        return self.theta * phi
+
+    def get_cost_jacobian(self, config):
+        phi_jacobian = self.get_feature_jacobian(config)
+        return self.theta * phi_jacobian
 
 
 class JacoTrajopt:
@@ -156,7 +178,8 @@ class JacoTrajopt:
                     {
                         "type": "collision",
                         "params": {
-                            "coeffs": [20],
+                            # "coeffs": [20],
+                        "coeffs": [100.0],
                         # penalty coefficients. list of length one is automatically expanded to a list of length n_timesteps
                             "dist_pen": [0.025],
                         # robot-obstacle distance that penalty kicks in. expands to length n_timesteps
@@ -184,7 +207,18 @@ class JacoTrajopt:
         # Add the cost function
         for i, cost_function in enumerate(self.cost_functions):
             for t in range(1, self.trajopt_num_waypoints):
-                prob.AddCost(cost_function.get_cost, [(t, j) for j in range(dofs)], "cost_{}_waypoint_{}".format(i, t))
+                # prob.AddCost(cost_function.get_cost, [(t, j) for j in range(dofs)], cost_function.get_name())
+                if cost_function.diffmethod == CostFunction.METHOD_NUMERICAL:
+                    prob.AddErrorCost(cost_function.get_cost,
+                                      [(t, j) for j in xrange(dofs)],
+                                      cost_function.type,
+                                      "{}_{}".format(cost_function.get_name(), t))
+                elif cost_function.diffmethod == CostFunction.METHOD_ANALYTIC:
+                    prob.AddErrorCost(cost_function.get_cost,
+                                      cost_function.get_cost_jacobian,
+                                      [(t, j) for j in xrange(dofs)],
+                                      cost_function.type,
+                                      "{}_{}".format(cost_function.get_name(), t))
 
         t_start = time.time()
         result = trajoptpy.OptimizeProblem(prob)  # do optimization
