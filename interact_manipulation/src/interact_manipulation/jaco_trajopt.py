@@ -34,6 +34,10 @@ class CostFunction:
         pass
 
     @abstractmethod
+    def get_visualization_markers(self):
+        pass
+
+    @abstractmethod
     def get_feature(self, config):
         """ Returns the feature vector of the robot at this configuration """
         pass
