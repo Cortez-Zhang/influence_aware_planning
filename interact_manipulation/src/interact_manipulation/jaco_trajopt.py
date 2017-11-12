@@ -161,10 +161,12 @@ class JacoTrajopt:
 
         dofs = len(start_config)
 
-        start_config[2] += math.pi  # TODO this seems to be a bug in OpenRAVE?
-        goal_config[2] += math.pi  # TODO this seems to be a bug in OpenRAVE?
+        start_config_or = list(start_config)
+        goal_config_or = list(goal_config)
+        start_config_or[2] += math.pi  # TODO this seems to be a bug in OpenRAVE?
+        goal_config_or[2] += math.pi  # TODO this seems to be a bug in OpenRAVE?
 
-        self.jaco.SetDOFValues(start_config + self.finger_joint_values)
+        self.jaco.SetDOFValues(start_config_or + self.finger_joint_values)
 
         request = {
             "basic_info":
@@ -197,12 +199,12 @@ class JacoTrajopt:
                 [
                     {
                         "type": "joint",  # joint-space target
-                        "params": {"vals": goal_config}  # length of vals = # dofs of manip
+                        "params": {"vals": goal_config_or}  # length of vals = # dofs of manip
                     }
                 ],
             "init_info": {
                 "type": "straight_line",  # straight line in joint space.
-                "endpoint": goal_config
+                "endpoint": goal_config_or
             }
         }
         s = json.dumps(request)  # convert dictionary into json-formatted string
