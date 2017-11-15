@@ -24,13 +24,14 @@ class HumanDynamics():
     def __init__(self, init_human_state, TS, params = {'robot_repulsion': 0.5,
                                  'goal_attraction': 0.5,
                                  'drag': 0.5}):
-        self.prev_human_state = State(position,velocity, acceleration)
+        self.states = State(position,velocity, acceleration)
         self.TS = TS
         self.init_human_state = init_human_state
         self.goal_pos = goal_pos
         self.params = params
         self.reset_human_sub = rospy.Subscriber("reset_human",Empty, self._reset_human)
-    def get_position(self, bodypoints)
+    
+    def get_position(self, bodypoints, t):
         #Simulate the human as a point mass
         #use forward euler to calculate next state
         for bodypoint in bodypoints:
@@ -48,7 +49,7 @@ class HumanDynamics():
         next_state.velocity = self.prev_human_state.velocity
         return next_state
     
-    def _reset_human(self)
+    def _reset_human(self):
         self.prev_state = self.init_human_state
 
     def _norm(self, a, b):
@@ -58,13 +59,13 @@ class HumanDynamics():
                          math.pow(eef_pose[6] - self.human_pose.position.z, 2))
 
 class test_human_dyanmics():
-    __init__(self):
+    def __init__(self):
         self.counter = 0
-    def get_position(self, reset):
-        if reset:
+    def get_position(self, t, config):
+        if t == 0:
             self.counter = 0
-        else 
-            self.couter = counter+1
+        else: 
+            self.couter += 1
         return self.counter
 
 class WaypointCostFunction(CostFunction):
@@ -72,7 +73,7 @@ class WaypointCostFunction(CostFunction):
         CostFunction.__init__(self, params={'hit_human_penalty': 0.5,
                                             'normalize_sigma': 1.0})
         #self.human = HumanDynamics()
-        self.test_human_dyanmics()
+        self.human = test_human_dyanmics()
         self.robot = robot
         self.hit_human_penalty = .5
         self.eef_link_name = eef_link_name
@@ -89,33 +90,24 @@ class WaypointCostFunction(CostFunction):
 
     def get_cost(self, config):
         """define the cost for a given configuration"""
-        q = config.tolist()
-        # q[2] += math.pi  # TODO this seems to be a bug in OpenRAVE?
-        self.robot.SetDOFValues(q + [0.0, 0.0, 0.0])
-        eef_link = self.robot.GetLink(self.eef_link_name)
-        if eef_link is None:
-            print("Error: end-effector \"{}\" does not exist".format(self.eef_link_name))
-            return 0.0
-        bodypoints = []
-        eef_pose = openravepy.poseFromMatrix(eef_link.GetTransform())
-        bodypoints.append(eef_pose)
-        cost = 0.0
-        # Get the (normalized) distance from the end-effector to the waypoint
-        distance = self._dist(bodypoints)
-        if abs(distance) < self._care_about_distance:
-            norm_distance = normalize_exp(distance, sigma=self.params['normalize_sigma'])
-            # assign cost inverse proportional to the distance squared 
-            # TODO swap this with something more principled
-            cost += self.params['hit_human_penalty'] * 1/math.pow(distance,2)
+        t = 1
+        cost = self.human.get_position(t,config)
+        print("cost is: {}".format(cost))
         return cost
    
-    def get_cost_func(self, t):
-        self.human.get_simple_position(t)
-        return self.get_cost(config)
+    def get_cost_reset(self, config):
+        """ returns a cost function for a given t"""
+        t = 0
+        cost = self.human.get_position(t,config)
+        print("RESET cost is now: {}".format(cost))
+        return cost
+    
+    def get_cost(self, config):
+        return 
     
     def _dist(self, bodypoints):
         human_pos = self.human.get_simple_state(bodypoints).position
-        for bodypoint in bodypoints 
+        for bodypoint in bodypoints: 
             dist += math.sqrt(math.pow(bodypoint[4] - self.human_pos.x, 2) +
                             math.pow(bodypoint[5] - self.human_pos.y, 2) +
                             math.pow(bodypoint[6] - self.human_pos.z, 2))
