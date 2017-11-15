@@ -61,12 +61,11 @@ class WaypointCostFunction(CostFunction):
         return cost
 
     def _dist(self, eef_pose, waypoint):
-        (trans,rot) = self.tf_listener.lookupTransform('/root', '/moving_frame', rospy.Time.now())
+        #(trans,rot) = self.tf_listener.lookupTransform('/root', '/moving_frame', rospy.Time.now())
 
-        self.human.pose = Pose(Point(trans),Quaternion(rot))
-        return math.sqrt(math.pow(eef_pose[4] - self.human_pose.position.x, 2) +
-                         math.pow(eef_pose[5] - self.human_pose.position.y, 2) +
-                         math.pow(eef_pose[6] - self.human_pose.position.z, 2))
+        return math.sqrt(math.pow(eef_pose[4] - 1, 2) +
+                         math.pow(eef_pose[5] - 1, 2) +
+                         math.pow(eef_pose[6] - 1, 2))
 
     def get_waypoint_markers(self):
         markers = MarkerArray()
