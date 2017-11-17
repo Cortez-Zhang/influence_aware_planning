@@ -185,6 +185,7 @@ class JacoInterface:
         res = self.fk(initial_joints, links=['j2s7s300_end_effector'])
         start_pose = self.arm_group.get_current_pose()
         goal_pose = res.pose_stamped[0]
+        print("home pose is {}".format(goal_pose))
         traj = self.plan(start_pose, goal_pose)
         self.execute(traj)
 
