@@ -184,7 +184,8 @@ class JacoTrajopt:
         # Add the cost function
         for i, cost_function in enumerate(self.cost_functions):
             for t in range(1, self.trajopt_num_waypoints):
-                prob.AddCost(cost_function.get_cost, [(t, j) for j in range(dofs)], "cost_{}_waypoint_{}".format(i, t))
+                print("Adding cost function with t = {}".format(t))
+                prob.AddCost(cost_function.get_cost_func(t), [(t, j) for j in range(dofs)], "cost_{}_waypoint_{}".format(i, t))
 
         t_start = time.time()
         result = trajoptpy.OptimizeProblem(prob)  # do optimization
