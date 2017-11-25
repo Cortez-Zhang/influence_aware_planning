@@ -57,7 +57,8 @@ class JacoTrajopt:
                             'j2s7s300_joint_6',
                             'j2s7s300_joint_7']
 
-        self.trajopt_num_waypoints = 10
+        self.trajopt_num_waypoints = 30
+        self.dt = .2 #time between waypoints to be added in post processing
         self.cost_functions = []
 
     def load_body_from_urdf(self, path_to_urdf, transform=np.eye(4, 4)):
@@ -194,24 +195,24 @@ class JacoTrajopt:
         print(result)
         return self._to_trajectory_msg(result.GetTraj())
 
-    def _to_trajectory_msg(self, traj, max_joint_vel=0.5):
+    def _to_trajectory_msg(self, traj, max_joint_vel=0.2):
         """ Converts to a moveit_msgs/RobotTrajectory message """
         msg = RobotTrajectory()
         msg.joint_trajectory.joint_names = self.joint_names
-        t = 0.0
+        t = 0.03
         for i in range(traj.shape[0]):
             p = JointTrajectoryPoint()
             p.positions = traj[i, :].tolist()
             p.positions[2] -= math.pi  # TODO this seems to be a bug in OpenRAVE?
             p.time_from_start = rospy.Duration(t)
-            t += 0.5
+            t += self.dt
 
             msg.joint_trajectory.points.append(p)
 
-        self._assign_constant_velocity_profile(msg, max_joint_vel)
+        #self._assign_constant_velocity_profile(msg, max_joint_vel)
 
         return msg
-
+    #def _assign 
     def _assign_constant_velocity_profile(self, traj, max_joint_vel):
         """ Assigns a constant velocity profile to a moveit_msgs/RobotTrajectory """
         t = 0.0
