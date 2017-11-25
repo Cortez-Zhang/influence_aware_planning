@@ -21,10 +21,11 @@ def normalize_exp(x, sigma):
     return 1.0 - math.exp(-math.pow(x, 2) / sigma)
 
 class HumanModel():
-    def __init__(self, start_pose, velocity):
+    def __init__(self, start_pose, velocity, dt=.2):
         self.start_pose = start_pose
         #print("start pose initialized: {}".format(self.start_pose))
         self.velocity = velocity
+        self.dt = dt
         #print("intial velcoity initialized {}".format(velocity))
 
 
@@ -38,7 +39,30 @@ class HumanModel():
         pose = Pose(Point(x,y,z), Quaternion(0,0,0,1))
         #print("returning pose in get pose: {}".format(pose))
         return pose
+    
+    def get_pose_forPlayBack(self,time_from_start):
+        remaining_time = time_from_start%self.dt
+        t1 = math.floor(time_from_start/self.dt)
 
+        if remaining_time !=0:
+            percent_between = remaining_time/self.dt
+            pose1 = self.get_pose([], t1)
+            t2 = math.ceil(time_from_start/self.dt)
+            pose2 = self.get_pose([], t2)
+            pose = self._interpolate(percent_between,pose1,pose2)
+        else:
+            pose = self.get_pose([], t1)
+        return pose
+
+    def _interpolate(self, percent_between, pose1, pose2):
+        pose = Pose()
+        pose.orientation = Quaternion(0,0,0,1)
+        pose.x = pose1.position.x*percent_between + pose2.position.x*(1-percent_between)
+        pose.y = pose1.position.x*percent_between + pose2.position.y*(1-percent_between)
+        pose.z = pose1.position.x*percent_between + pose2.position.z*(1-percent_between)
+        return pose
+
+    #TODO this is obsolete, delete?
     def get_end_waypoint_marker(self):
         markers = MarkerArray()
 
@@ -60,13 +84,13 @@ class WaypointCostFunction(CostFunction):
                                             'normalize_sigma': 1.0})
         self.robot = robot
         self.human_start_pose = Pose(Point(-0.5,0.216,0.538),Quaternion(0,0,0,1))
-        human_velocity = Twist(Vector3(0,0,0),Vector3(0,0,0))
-        self.human_model = HumanModel(self.human_start_pose, human_velocity)
+        human_velocity = Twist(Vector3(.05,0,0),Vector3(0,0,0))
+        self.human_model = HumanModel(self.human_start_pose, human_velocity, .2)
         end_time = 10
         self.human_end_pose = self.human_model.get_pose(0,end_time)
         self.hit_human_penalty = .5
         self.eef_link_name = eef_link_name
-        self._care_about_distance = .1
+        self._care_about_distance = .15
 
         self.tf_listener = TransformListener()    
 
@@ -96,11 +120,11 @@ class WaypointCostFunction(CostFunction):
         eef_pose = openravepy.poseFromMatrix(eef_link.GetTransform())
 
         cost = 0.0
-        print("time in get_cost_with_t {}".format(t))
-        print("q: {}".format(q))
+        #print("time in get_cost_with_t {}".format(t))
+        #print("q: {}".format(q))
         # Get the (normalized) distance from the end-effector to the waypoint
         human_pose = self.human_model.get_pose(config, t)
-        distance = normalize_exp(self._dist(eef_pose, human_pose), sigma=self.params['normalize_sigma'])
+        distance = self._dist(eef_pose, human_pose)
         if abs(distance) < self._care_about_distance:
             # assign cost inverse proportional to the distance squared 
             # TODO swap this with something more principled
@@ -132,9 +156,9 @@ class WaypointCostFunction(CostFunction):
         waypoint_marker.id = 1
         waypoint_marker.type = Marker.SPHERE
         waypoint_marker.pose = self.human_start_pose
-        waypoint_marker.scale.x = 0.1
-        waypoint_marker.scale.y = 0.1
-        waypoint_marker.scale.z = 0.1
+        waypoint_marker.scale.x = 0.05
+        waypoint_marker.scale.y = 0.05
+        waypoint_marker.scale.z = 0.05
         waypoint_marker.color.r = color_r
         waypoint_marker.color.g = color_g
         waypoint_marker.color.b = color_b
@@ -167,8 +191,8 @@ class WaypointCostFunction(CostFunction):
         
         arrow_marker.pose = Pose(self.human_start_pose.position,Quaternion(0,0,0,1))
         arrow_marker.scale.x = .1
-        arrow_marker.scale.y = 0.01
-        arrow_marker.scale.z = 0.01
+        arrow_marker.scale.y = 0.05
+        arrow_marker.scale.z = 0.05
         arrow_marker.color.r = 1
         arrow_marker.color.b = 0
         arrow_marker.color.g = 0
@@ -188,9 +212,9 @@ class WaypointCostFunction(CostFunction):
         end_marker.id = 2
         end_marker.type = Marker.SPHERE
         end_marker.pose = self.human_end_pose
-        end_marker.scale.x = 0.1
-        end_marker.scale.y = 0.1
-        end_marker.scale.z = 0.1
+        end_marker.scale.x = 0.05
+        end_marker.scale.y = 0.05
+        end_marker.scale.z = 0.05
         end_marker.color.r = color_r
         end_marker.color.g = color_g
         end_marker.color.b = color_b
@@ -201,7 +225,7 @@ class WaypointCostFunction(CostFunction):
         return markers
     
 class InteractiveMarkerAgent():
-    def __init__(self, server_name, position, menu_labels=[], base_frame = "root", scale = .25):
+    def __init__(self, server_name, position, menu_labels=[], base_frame = "root", scale = .15):
         self._scale = scale
         self.server = InteractiveMarkerServer(server_name)
         self.menu_handler = MenuHandler()
@@ -238,7 +262,7 @@ class InteractiveMarkerAgent():
 
 class AssertiveRobotPlanner(InteractiveMarkerAgent):
     def __init__(self):
-        initial_position = Point(0,0,0)
+        initial_position = Point(-0.5,0.216,0.538)
         menu_label_list = []
         menu_label_list.append("Plan and Execute")
         menu_label_list.append("Reset Human")
@@ -251,18 +275,18 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         self.make6DofMarker(False, InteractiveMarkerControl.MOVE_ROTATE_3D, True )
         self.server.applyChanges()
 
-        self.start_human_pub = rospy.Publisher("start_human", Empty, queue_size=10)
-        self.reset_human_pub = rospy.Publisher("reset_human", Empty, queue_size=10)
-
+        self.start_human_pub = rospy.Publisher("start_human", Pose, queue_size=10)
+        self.reset_human_pub = rospy.Publisher("reset_human", Pose, queue_size=10)
+        self.human_start_pose = Pose(Point(-0.5,0.216,0.538),Quaternion(0,0,0,1))
     def _onclick_callback(self, feedback):
         if feedback.event_type == InteractiveMarkerFeedback.MENU_SELECT:
             if feedback.menu_entry_id == 1:
-                self.start_human_pub.publish(Empty())
+                self.start_human_pub.publish(self.human_start_pose)
                 #Publish empty message to start human topic
                 self._plan_and_execute(feedback)
 
             elif feedback.menu_entry_id == 2:
-                self.reset_human_pub.publish(Empty())
+                self.reset_human_pub.publish(self.human_start_pose)
             elif feedback.menu_entry_id == 3:
                 self.jaco_interface.home()
 
@@ -270,7 +294,7 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
 
     def _plan_and_execute(self, feedback):
         self.jaco_interface.planner.cost_functions = [self.waypoint_cost_func]
-        self.jaco_interface.planner.trajopt_num_waypoints = 15
+        self.jaco_interface.planner.trajopt_num_waypoints = 30
 
         goal_pose = PoseStamped()
         goal_pose.header = feedback.header
@@ -280,9 +304,10 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         rospy.loginfo("Requesting plan from start_pose:\n {} \n goal_pose:\n {}".format(start_pose, goal_pose))
 
         traj = self.jaco_interface.plan(start_pose, goal_pose)
-
+        rospy.loginfo("Executing trajectory ******* {}".format(traj))
         m = self.waypoint_cost_func.get_waypoint_markers()
         self.jaco_interface.marker_array_pub.publish(m)
+
 
         self.jaco_interface.execute(traj)
 
@@ -295,6 +320,7 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         int_marker = InteractiveMarker()
         int_marker.header.frame_id = self._base_frame
         int_marker.pose.position = self.marker_position
+        int_marker.pose.orientation = Quaternion(.707,0,0,-.707)
         int_marker.scale = self._scale
 
         int_marker.name = "simple_6dof"
