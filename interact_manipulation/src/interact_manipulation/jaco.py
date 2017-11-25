@@ -68,9 +68,9 @@ class JacoInterface:
         start_marker.id = 0
         start_marker.type = Marker.SPHERE
         start_marker.pose = start_pose.pose
-        start_marker.scale.x = 0.1
-        start_marker.scale.y = 0.1
-        start_marker.scale.z = 0.1
+        start_marker.scale.x = 0.05
+        start_marker.scale.y = 0.05
+        start_marker.scale.z = 0.05
         start_marker.color.r = 1.0
         start_marker.color.g = 0.0
         start_marker.color.b = 0.0
@@ -86,9 +86,9 @@ class JacoInterface:
         goal_marker.id = 0
         goal_marker.type = Marker.SPHERE
         goal_marker.pose = goal_pose.pose
-        goal_marker.scale.x = 0.1
-        goal_marker.scale.y = 0.1
-        goal_marker.scale.z = 0.1
+        goal_marker.scale.x = 0.05
+        goal_marker.scale.y = 0.05
+        goal_marker.scale.z = 0.05
         goal_marker.color.r = 0.0
         goal_marker.color.g = 1.0
         goal_marker.color.b = 0.0
