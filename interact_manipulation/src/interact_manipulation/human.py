@@ -18,7 +18,7 @@ from math import sin
 
 class Human(InteractiveMarkerAgent):
     def __init__(self, moving_frame="moving_frame"):
-        initial_position = Point(0,0,1)
+        initial_position = Point(-.5,0.216,0.538)
         InteractiveMarkerAgent.__init__(self, "Human", initial_position)
         self._moving_frame = moving_frame
         self.br = TransformBroadcaster()
@@ -27,12 +27,12 @@ class Human(InteractiveMarkerAgent):
         self.makeMovingMarker()
         self.server.applyChanges()
         
-        self.human_start_pose = Pose(Point(-0.5,0.216,0.538),Quaternion(0,0,0,1))
-        human_velocity = Twist(Vector3(.05,0,0),Vector3(0,0,0))
-        self.human_model = HumanModel(self.human_start_pose, human_velocity)
+        #self.human_start_pose = Pose(Point(-0.5,0.216,0.538),Quaternion(0,0,0,1))
+        #human_velocity = Twist(Vector3(.05,0,0),Vector3(0,0,0))
+        #self.human_model = HumanModel(self.human_start_pose, human_velocity)
 
         #self.Timer = rospy.Timer(rospy.Duration(0.02), self._update_human_callback)
-        self.start_time = rospy.Time.now()
+        self.start_time = rospy.Time.now().to_sec()
 
         self.start_human_sub = rospy.Subscriber("start_human",Pose, self._start_human)
         self.reset_human_sub = rospy.Subscriber("reset_human",Pose, self._reset_human)
@@ -48,13 +48,14 @@ class Human(InteractiveMarkerAgent):
     def get_simulated_human_state(self):
         time = rospy.Time.now()
         #keeps track of time
-        time_from_start = self.start_time - time
-        humanpose = self.human_model.get_pose_forPlayBack(time_from_start)
-        pos = humanpose.position
-        self.br.sendTransform((pos.x, pos.y, pos.z) , (0, 0, 0, 1.0), time, self._moving_frame, self._base_frame )
-
-        self.human_state_pub.publish(Pose(pos,Quaternion(0,0,0,1)))
-        return pos
+        time_from_start = time.to_sec() - self.start_time
+        #rospy.loginfo("time_from_start {}".format(time_from_start))
+        #humanpose = self.human_model.get_pose_forPlayBack(time_from_start)
+        #pos = humanpose.position
+        self.br.sendTransform((time_from_start*.25, 0, 0) , (0, 0, 0, 1.0), time, self._moving_frame, self._base_frame )
+        #rospy.loginfo("human position {}".format(pos))
+        #   self.human_state_pub.publish(Pose(pos,Quaternion(0,0,0,1)))
+        #return pos
     
     def _reset_human(self, human_start_pose):
         rospy.loginfo("resetting Human")
@@ -64,8 +65,8 @@ class Human(InteractiveMarkerAgent):
     def _start_human(self, human_start_pose):
         rospy.loginfo("Starting Human")
         #self.counter = 0
-        self.human_start_pose = human_start_pose
-        self.start_time = rospy.Time.now()
+        #self.human_start_pose = human_start_pose
+        self.start_time = rospy.Time.now().to_sec()
         self.Timer = rospy.Timer(rospy.Duration(0.02), self._update_human_callback)
 
     def makeMovingMarker(self):

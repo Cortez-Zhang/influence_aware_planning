@@ -43,23 +43,30 @@ class HumanModel():
     def get_pose_forPlayBack(self,time_from_start):
         remaining_time = time_from_start%self.dt
         t1 = math.floor(time_from_start/self.dt)
+        #rospy.loginfo("t1: {}".format(t1))
 
         if remaining_time !=0:
             percent_between = remaining_time/self.dt
             pose1 = self.get_pose([], t1)
             t2 = math.ceil(time_from_start/self.dt)
             pose2 = self.get_pose([], t2)
+            #rospy.loginfo("t2: {}".format(t2))
+            #rospy.loginfo("pose1 {}".format(pose1))
+            #rospy.loginfo("pose2 {}".format(pose2))
+            #rospy.loginfo("percent_between: {}".format(percent_between))
             pose = self._interpolate(percent_between,pose1,pose2)
+            #rospy.loginfo("interpolated pose: {}".format(pose))
         else:
             pose = self.get_pose([], t1)
+            #rospy.loginfo("no remainder, returning pose for t1: {}".format(pose))
         return pose
 
     def _interpolate(self, percent_between, pose1, pose2):
         pose = Pose()
         pose.orientation = Quaternion(0,0,0,1)
-        pose.x = pose1.position.x*percent_between + pose2.position.x*(1-percent_between)
-        pose.y = pose1.position.x*percent_between + pose2.position.y*(1-percent_between)
-        pose.z = pose1.position.x*percent_between + pose2.position.z*(1-percent_between)
+        pose.position.x = pose1.position.x*percent_between + pose2.position.x*(1-percent_between)
+        pose.position.y = pose1.position.y*percent_between + pose2.position.y*(1-percent_between)
+        pose.position.z = pose1.position.z*percent_between + pose2.position.z*(1-percent_between)
         return pose
 
     #TODO this is obsolete, delete?
@@ -77,7 +84,7 @@ class CostWithTime():
     def __call__(self, config):
         #print("calling cost with time {}".format(self.time))        
         return self.get_cost_func(config, self.time)
-    
+
 class WaypointCostFunction(CostFunction):
     def __init__(self, robot, eef_link_name='j2s7s300_end_effector'):
         CostFunction.__init__(self, params={'hit_human_penalty': 0.5,
@@ -90,7 +97,7 @@ class WaypointCostFunction(CostFunction):
         self.human_end_pose = self.human_model.get_pose(0,end_time)
         self.hit_human_penalty = .5
         self.eef_link_name = eef_link_name
-        self._care_about_distance = .15
+        self._care_about_distance = .1
 
         self.tf_listener = TransformListener()    
 
@@ -103,7 +110,7 @@ class WaypointCostFunction(CostFunction):
     def get_cost_func(self, t):
         #print("setting up cost func t= {}".format(t))
         return CostWithTime(t, self.get_cost_with_t)
-    
+
     def get_cost(self, config):
         pass
 
@@ -120,6 +127,8 @@ class WaypointCostFunction(CostFunction):
         eef_pose = openravepy.poseFromMatrix(eef_link.GetTransform())
 
         cost = 0.0
+        rospy.loginfo("time: {}".format(t))
+        rospy.loginfo("config: {}".format(q))
         #print("time in get_cost_with_t {}".format(t))
         #print("q: {}".format(q))
         # Get the (normalized) distance from the end-effector to the waypoint
@@ -281,7 +290,6 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
     def _onclick_callback(self, feedback):
         if feedback.event_type == InteractiveMarkerFeedback.MENU_SELECT:
             if feedback.menu_entry_id == 1:
-                self.start_human_pub.publish(self.human_start_pose)
                 #Publish empty message to start human topic
                 self._plan_and_execute(feedback)
 
@@ -294,7 +302,7 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
 
     def _plan_and_execute(self, feedback):
         self.jaco_interface.planner.cost_functions = [self.waypoint_cost_func]
-        self.jaco_interface.planner.trajopt_num_waypoints = 30
+        self.jaco_interface.planner.trajopt_num_waypoints = 20
 
         goal_pose = PoseStamped()
         goal_pose.header = feedback.header
@@ -308,7 +316,7 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         m = self.waypoint_cost_func.get_waypoint_markers()
         self.jaco_interface.marker_array_pub.publish(m)
 
-
+        self.start_human_pub.publish(self.human_start_pose)
         self.jaco_interface.execute(traj)
 
     def run(self):        
