@@ -38,12 +38,19 @@ class HumanState():
     @velocity.setter
     def velocity(self, vel):
         self.velocity = vel
+    
+    def __str__(self):
+        pos = self.position
+        vel = self.velocity
+        return '({}, {}, {}; {}, {}, {})'.format(pos.x, pos.y, pos.z, vel.x, vel.y, vel.z)
+    
+    __repr__ = __str__
 
 class HumanModel():
     def __init__(self, start_state, goal_pose, velocity, dt=.2, params = {'goal_attraction': 0.05, 
                                                                         'robot_repulsion': 0.05,
                                                                         'drag': 0.04,
-                                                                        'min_call_time': 16.69}):
+                                                                        'min_call_time': .05}):
         self.start_state = start_state
         self.goal_pose = goal_pose
 
@@ -55,26 +62,25 @@ class HumanModel():
         self.prev_call_time = time.time()
         self.params = params
 
-    def reset_model(self):
+    def reset_model(self):   
         self.prev_state = self.start_state
+        rospy.loginfo("start_state {}".format(self.start_state))
         self.states = []
-    
+        self.states.append(self.start_state)
+        rospy.loginfo("resetting states {}".format(self.states))
+
     def get_pose(self, t):
-        try:
-            state = self.states[t]
-            rospy.loginfo("Getting/returning human pose x:{} y:{} z:{}".format(state.position.x, state.position.y, state.position.z))
-        except:
-            state = []
-            rospy.logerr("Bad get_pose request for t: {} on states: {}".format(t, self.states))
+        state = self.states[t]
+        rospy.loginfo("States {}".format(self.states))
+        rospy.loginfo("Getting/returning human pose {}".format(state))
         return state
 
-    def advance_model(self, bodypoints, t):     
+    def advance_model(self, bodypoints, t, delta_time):     
         #Simulate the human as a point mass
         #use forward euler to calculate next state
-        rospy.loginfo("advancing time: {}".format(t))
-        rospy.loginfo("human located at: x: {} y: {} z: {}".format(self.prev_state.position.x, self.prev_state.position.y, self.prev_state.position.z))
-        current_time = time.time()
-        delta_time = current_time-self.prev_call_time
+        rospy.loginfo("advance_model call at time: {}".format(t))
+        rospy.loginfo("prev human state {}".format(self.prev_state))
+        
         rospy.loginfo("delta_time {}".format(delta_time))
         if delta_time > self.params['min_call_time']:
             F_repulse = Point(0, 0, 0)
@@ -131,35 +137,20 @@ class HumanModel():
             self.next_state.velocity.x = acc.x*self.dt+self.prev_state.velocity.x
             self.next_state.velocity.y = acc.y*self.dt+self.prev_state.velocity.y
             self.next_state.velocity.z = acc.z*self.dt+self.prev_state.velocity.z
-            rospy.loginfo("prev_state.vel x: {} y: {} z: {}".format(self.prev_state.velocity.x, self.prev_state.velocity.y, self.prev_state.velocity.z))
-
             
             self.next_state.position.x = self.prev_state.velocity.x*self.dt + self.prev_state.position.x
             self.next_state.position.y = self.prev_state.velocity.y*self.dt + self.prev_state.position.y
             self.next_state.position.z = self.prev_state.velocity.z*self.dt + self.prev_state.position.z
             
-            rospy.loginfo("Advancing human at t: {} to state: {}".format(t,self.next_state))
+            rospy.loginfo("next_state calculated {}".format(t,self.next_state))
             self.prev_state = self.next_state
             self.states.append(self.next_state)
 
         else:
-            rospy.loginfo("Did not advance human at t: {}")
+            rospy.loginfo("Did not advance human at t: {}".format(t))
     
     def _norm_sqrd(self, vel):
         return math.sqrt(vel.x**2, vel.y**2, vel.z**2)
-
-    #TODO this function is redundnat with the _dist func below
-    def _dist1(self, bodypoint, human_pos):
-
-        return math.sqrt(math.pow(bodypoint[4] - human_pos.x, 2) +
-                         math.pow(bodypoint[5] - human_pos.y, 2) +
-                         math.pow(bodypoint[6] - human_pos.z, 2))
-    
-    def _dist2(self, goal_pos, human_pos):
-
-        return math.sqrt(math.pow(goal_pos.x - human_pos.x, 2) +
-                         math.pow(goal_pos.y - human_pos.y, 2) +
-                         math.pow(goal_pos.z - human_pos.z, 2))
         
     def get_simple_pose(self, t):
         #print("t in get_pose: {} start_pose {}".format(t, self.start_pose))
@@ -175,12 +166,17 @@ class HumanModel():
         return self.state[t]
 
 class CostWithTime():
-    def __init__(self, t, get_cost_func):
-        self.time = t
-        self.get_cost_func = get_cost_func
+    def __init__(self, t, cost_func):
+        self.time = t-1 #the first t I get in cost functions is 1, so Im going to shift it
+        self.prev_call_time = 0.0
+        self.get_cost = cost_func
+
     def __call__(self, config):
-        #print("calling cost with time {}".format(self.time))        
-        return self.get_cost_func(config, self.time)
+        #print("calling cost with time {}".format(self.time)) 
+        current_time = time.time()
+        delta_time = current_time-self.prev_call_time
+        self.prev_call_time = current_time       
+        return self.get_cost(config, self.time, delta_time)
 
 class WaypointCostFunction(CostFunction):
     def __init__(self, robot, eef_link_name='j2s7s300_end_effector'):
@@ -204,7 +200,7 @@ class WaypointCostFunction(CostFunction):
     def get_cost(self, config):
         pass
 
-    def get_cost_with_t(self, config, t):
+    def get_cost_with_t(self, config, t, delta_time):
         """define the cost for a given configuration"""
         q = config.tolist()
         # q[2] += math.pi  # TODO this seems to be a bug in OpenRAVE?
@@ -223,10 +219,11 @@ class WaypointCostFunction(CostFunction):
         
         if t == 0:
             self.human_model.reset_model()
+            rospy.loginfo("resetting model at t: {}".format(t))
         else:
-            self.human_model.advance_model(bodypoints, t)
-        
+            self.human_model.advance_model(bodypoints, t, delta_time)
         human_pose = self.human_model.get_pose(t)
+
         distance = self._dist(eef_pose, human_pose)
         if distance < self.params['care_about_distance']:
             # assign cost inverse proportional to the distance squared 
