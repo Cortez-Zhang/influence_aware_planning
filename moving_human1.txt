@@ -1,0 +1,14 @@
+You can set logging level with TRAJOPT_LOG_THRESH. Valid values: FATAL ERROR WARN INFO DEBUG TRACE. Defaulting to INFO
+[0m[ INFO] [1511804341.900512564]: Loading robot model 'j2s7s300'...[0m
+[33m[ WARN] [1511804341.900540510]: Skipping virtual joint 'world_to_base_virtual_joint' because its child frame 'root' does not match the URDF frame 'world'[0m
+[0m[ INFO] [1511804341.900549934]: No root/virtual joint specified in SRDF. Assuming fixed joint[0m
+[0m[ INFO] [1511804342.227578780, 45283.868000000]: IK Using joint j2s7s300_link_1 -3.40282e+38 3.40282e+38[0m
+[0m[ INFO] [1511804342.227612677, 45283.868000000]: IK Using joint j2s7s300_link_2 0.523599 5.75959[0m
+[0m[ INFO] [1511804342.227629308, 45283.868000000]: IK Using joint j2s7s300_link_3 -3.40282e+38 3.40282e+38[0m
+[0m[ INFO] [1511804342.227648786, 45283.868000000]: IK Using joint j2s7s300_link_4 0.523599 5.75959[0m
+[0m[ INFO] [1511804342.227663501, 45283.868000000]: IK Using joint j2s7s300_link_5 -3.40282e+38 3.40282e+38[0m
+[0m[ INFO] [1511804342.227677254, 45283.868000000]: IK Using joint j2s7s300_link_6 0.523599 5.75959[0m
+[0m[ INFO] [1511804342.227689831, 45283.868000000]: IK Using joint j2s7s300_link_7 -3.40282e+38 3.40282e+38[0m
+[0m[ INFO] [1511804342.227709417, 45283.868000000]: Looking in private handle: /move_group_commander_wrappers_1511804341698442975 for param name: arm/position_only_ik[0m
+[0m[ INFO] [1511804342.228301490, 45283.869000000]: Looking in private handle: /move_group_commander_wrappers_1511804341698442975 for param name: arm/solve_type[0m
+[0m[ INFO] [1511804342.228732511, 45283.869000000]: Using solve type Speed[0m
