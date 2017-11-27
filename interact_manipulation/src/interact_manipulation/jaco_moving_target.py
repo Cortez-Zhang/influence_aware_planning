@@ -4,6 +4,7 @@ import openravepy
 import rospy
 import random
 import copy
+import time
 
 from interactive_markers.interactive_marker_server import *
 from interactive_markers.menu_handler import *
@@ -16,71 +17,167 @@ from tf import TransformBroadcaster, TransformListener
 from math import sin
 from std_msgs.msg import Empty
 
-def normalize_exp(x, sigma):
-    """ Normalizes the value using an exponential """
-    return 1.0 - math.exp(-math.pow(x, 2) / sigma)
+
+class HumanState():
+    def __init__(self, point, velocity):
+        self.position = point
+        self.velocity = velocity
+
+    @property
+    def position(self):
+        return self.position
+    
+    @position.setter
+    def position(self, pos):
+        self.position = pos
+    
+    @property
+    def velocity(self):
+        return self.velocity
+
+    @velocity.setter
+    def velocity(self, vel):
+        self.velocity = vel
 
 class HumanModel():
-    def __init__(self, start_pose, velocity, dt=.2):
-        self.start_pose = start_pose
-        #print("start pose initialized: {}".format(self.start_pose))
-        self.velocity = velocity
+    def __init__(self, start_state, goal_pose, velocity, dt=.2, params = {'goal_attraction': 0.05, 
+                                                                        'robot_repulsion': 0.05,
+                                                                        'drag': 0.04,
+                                                                        'min_call_time': 16.69}):
+        self.start_state = start_state
+        self.goal_pose = goal_pose
+
         self.dt = dt
-        #print("intial velcoity initialized {}".format(velocity))
+        self.prev_state = start_state
+        self.next_state = start_state
+        self.states = []
+        self.states.append(start_state)
+        self.prev_call_time = time.time()
+        self.params = params
 
+    def reset_model(self):
+        self.prev_state = self.start_state
+        self.states = []
+    
+    def get_pose(self, t):
+        try:
+            state = self.states[t]
+            rospy.loginfo("Getting/returning human pose x:{} y:{} z:{}".format(state.position.x, state.position.y, state.position.z))
+        except:
+            state = []
+            rospy.logerr("Bad get_pose request for t: {} on states: {}".format(t, self.states))
+        return state
 
-    def get_pose(self, config,t):
+    def advance_model(self, bodypoints, t):     
+        #Simulate the human as a point mass
+        #use forward euler to calculate next state
+        rospy.loginfo("advancing time: {}".format(t))
+        rospy.loginfo("human located at: x: {} y: {} z: {}".format(self.prev_state.position.x, self.prev_state.position.y, self.prev_state.position.z))
+        current_time = time.time()
+        delta_time = current_time-self.prev_call_time
+        rospy.loginfo("delta_time {}".format(delta_time))
+        if delta_time > self.params['min_call_time']:
+            F_repulse = Point(0, 0, 0)
+            for bodypoint in bodypoints:
+                rospy.loginfo("bodypoint located at x: {} y: {} z: {}".format(bodypoint[4], bodypoint[5], bodypoint[6]))
+
+                xdistb = bodypoint[4]-self.prev_state.position.x
+                ydistb = bodypoint[5]-self.prev_state.position.y
+                zdistb = bodypoint[6]-self.prev_state.position.z
+
+                if abs(xdistb) < 0.05:
+                    xdistb = 200
+                if abs(ydistb) < 0.05:
+                    ydistb = 200
+                if abs(zdistb) < 0.05:
+                    zdistb = 200
+                
+                F_repulse.x += -1*self.params['robot_repulsion']/(xdistb)**2
+                F_repulse.y += -1*self.params['robot_repulsion']/(ydistb)**2
+                F_repulse.z += -1*self.params['robot_repulsion']/(zdistb)**2
+                rospy.loginfo("F_repulse x: {} y: {} z: {}".format(F_repulse.x, F_repulse.y, F_repulse.z))
+
+            
+            F_attract = Point(0,0,0)
+
+            xdistg = self.goal_pose.x-self.prev_state.position.x
+            ydistg = self.goal_pose.y-self.prev_state.position.y
+            zdistg = self.goal_pose.z-self.prev_state.position.z
+
+            if abs(xdistg) < 0.05:
+                xdistg = 200
+            if abs(ydistg) < 0.05:
+                ydistg = 200
+            if abs(zdistg) < 0.05:
+                zdistg = 200
+
+            F_attract.x = self.params['goal_attraction']/(xdistg)**2
+            F_attract.y = self.params['goal_attraction']/(ydistg)**2
+            F_attract.z = self.params['goal_attraction']/(zdistg)**2
+            
+            rospy.loginfo("F_attract x: {} y: {} z: {}".format(F_attract.x, F_attract.y, F_attract.z))
+
+            F_drag = Point(0,0,0)
+            F_drag.x = -self.prev_state.velocity.x**2*self.params["drag"]
+            F_drag.y = -self.prev_state.velocity.y**2*self.params["drag"]
+            F_drag.z = -self.prev_state.velocity.z**2*self.params["drag"]
+            rospy.loginfo("F_drag x: {} y: {} z: {}".format(F_drag.x, F_drag.y, F_drag.z))
+
+            acc = Point(0,0,0)  #assume mass is 1, the params need to be tuned anyway
+            acc.x = F_repulse.x + F_attract.x + F_drag.x
+            acc.y = F_repulse.y + F_attract.y + F_drag.y 
+            acc.z = F_repulse.z + F_attract.z + F_drag.z
+            
+            self.next_state.velocity.x = acc.x*self.dt+self.prev_state.velocity.x
+            self.next_state.velocity.y = acc.y*self.dt+self.prev_state.velocity.y
+            self.next_state.velocity.z = acc.z*self.dt+self.prev_state.velocity.z
+            rospy.loginfo("prev_state.vel x: {} y: {} z: {}".format(self.prev_state.velocity.x, self.prev_state.velocity.y, self.prev_state.velocity.z))
+
+            
+            self.next_state.position.x = self.prev_state.velocity.x*self.dt + self.prev_state.position.x
+            self.next_state.position.y = self.prev_state.velocity.y*self.dt + self.prev_state.position.y
+            self.next_state.position.z = self.prev_state.velocity.z*self.dt + self.prev_state.position.z
+            
+            rospy.loginfo("Advancing human at t: {} to state: {}".format(t,self.next_state))
+            self.prev_state = self.next_state
+            self.states.append(self.next_state)
+
+        else:
+            rospy.loginfo("Did not advance human at t: {}")
+    
+    def _norm_sqrd(self, vel):
+        return math.sqrt(vel.x**2, vel.y**2, vel.z**2)
+
+    #TODO this function is redundnat with the _dist func below
+    def _dist1(self, bodypoint, human_pos):
+
+        return math.sqrt(math.pow(bodypoint[4] - human_pos.x, 2) +
+                         math.pow(bodypoint[5] - human_pos.y, 2) +
+                         math.pow(bodypoint[6] - human_pos.z, 2))
+    
+    def _dist2(self, goal_pos, human_pos):
+
+        return math.sqrt(math.pow(goal_pos.x - human_pos.x, 2) +
+                         math.pow(goal_pos.y - human_pos.y, 2) +
+                         math.pow(goal_pos.z - human_pos.z, 2))
+        
+    def get_simple_pose(self, t):
         #print("t in get_pose: {} start_pose {}".format(t, self.start_pose))
         x = self.start_pose.position.x+self.velocity.linear.x*t
         y = self.start_pose.position.y+self.velocity.linear.y*t
-        #print("self.velocity.linear.y {}".format(self.velocity.linear.y))
-        #print("next_y: {} self.start_pose.position.y: {}".format(y, self.start_pose.position.y))
         z = self.start_pose.position.z+self.velocity.linear.z*t
         pose = Pose(Point(x,y,z), Quaternion(0,0,0,1))
         #print("returning pose in get pose: {}".format(pose))
         return pose
     
-    def get_pose_forPlayBack(self,time_from_start):
-        remaining_time = time_from_start%self.dt
-        t1 = math.floor(time_from_start/self.dt)
-        #rospy.loginfo("t1: {}".format(t1))
+    def get_pose_forPlayBack(self,t):
 
-        if remaining_time !=0:
-            percent_between = remaining_time/self.dt
-            pose1 = self.get_pose([], t1)
-            t2 = math.ceil(time_from_start/self.dt)
-            pose2 = self.get_pose([], t2)
-            #rospy.loginfo("t2: {}".format(t2))
-            #rospy.loginfo("pose1 {}".format(pose1))
-            #rospy.loginfo("pose2 {}".format(pose2))
-            #rospy.loginfo("percent_between: {}".format(percent_between))
-            pose = self._interpolate(percent_between,pose1,pose2)
-            #rospy.loginfo("interpolated pose: {}".format(pose))
-        else:
-            pose = self.get_pose([], t1)
-            #rospy.loginfo("no remainder, returning pose for t1: {}".format(pose))
-        return pose
-
-    def _interpolate(self, percent_between, pose1, pose2):
-        pose = Pose()
-        pose.orientation = Quaternion(0,0,0,1)
-        pose.position.x = pose1.position.x*percent_between + pose2.position.x*(1-percent_between)
-        pose.position.y = pose1.position.y*percent_between + pose2.position.y*(1-percent_between)
-        pose.position.z = pose1.position.z*percent_between + pose2.position.z*(1-percent_between)
-        return pose
-
-    #TODO this is obsolete, delete?
-    def get_end_waypoint_marker(self):
-        markers = MarkerArray()
-
-        return markers
+        return self.state[t]
 
 class CostWithTime():
     def __init__(self, t, get_cost_func):
         self.time = t
-        #print("setting up cost with time t: {}".format(t))
         self.get_cost_func = get_cost_func
-        #print("init time {}".format(self.time))
     def __call__(self, config):
         #print("calling cost with time {}".format(self.time))        
         return self.get_cost_func(config, self.time)
@@ -88,25 +185,18 @@ class CostWithTime():
 class WaypointCostFunction(CostFunction):
     def __init__(self, robot, eef_link_name='j2s7s300_end_effector'):
         CostFunction.__init__(self, params={'hit_human_penalty': 0.5,
-                                            'normalize_sigma': 1.0})
+                                            'normalize_sigma': 1.0,
+                                            'care_about_distance': 0.1})
         self.robot = robot
         self.human_start_pose = Pose(Point(-0.5,0.216,0.538),Quaternion(0,0,0,1))
-        human_velocity = Twist(Vector3(.05,0,0),Vector3(0,0,0))
-        self.human_model = HumanModel(self.human_start_pose, human_velocity, .2)
-        end_time = 10
-        self.human_end_pose = self.human_model.get_pose(0,end_time)
-        self.hit_human_penalty = .5
-        self.eef_link_name = eef_link_name
-        self._care_about_distance = .1
+        self.human_goal_pose = Pose(Point(0,0.216,0.538), Quaternion(0,0,0,1))
+        self.human_velocity = Vector3(0,0,0)
+        self.human_start_state = HumanState(self.human_start_pose.position, self.human_velocity)
+        self.human_model = HumanModel(self.human_start_state, self.human_goal_pose.position, self.human_velocity)
 
+        self.eef_link_name = eef_link_name
         self.tf_listener = TransformListener()    
 
-        self.human_position_sub = rospy.Subscriber("human_state", Pose, self._get_position)
-
-    def _get_position(self, human_pose):
-        pass
-        #self.human_pose = human_pose
-        #rospy.loginfo("current pose {}".format(human_pose))
     def get_cost_func(self, t):
         #print("setting up cost func t= {}".format(t))
         return CostWithTime(t, self.get_cost_with_t)
@@ -129,12 +219,16 @@ class WaypointCostFunction(CostFunction):
         cost = 0.0
         rospy.loginfo("time: {}".format(t))
         rospy.loginfo("config: {}".format(q))
-        #print("time in get_cost_with_t {}".format(t))
-        #print("q: {}".format(q))
-        # Get the (normalized) distance from the end-effector to the waypoint
-        human_pose = self.human_model.get_pose(config, t)
+        bodypoints = [eef_pose] #TODO add more links here
+        
+        if t == 0:
+            self.human_model.reset_model()
+        else:
+            self.human_model.advance_model(bodypoints, t)
+        
+        human_pose = self.human_model.get_pose(t)
         distance = self._dist(eef_pose, human_pose)
-        if abs(distance) < self._care_about_distance:
+        if distance < self.params['care_about_distance']:
             # assign cost inverse proportional to the distance squared 
             # TODO swap this with something more principled
             cost += self.params['hit_human_penalty'] * 1/math.pow(distance,2)
@@ -142,10 +236,7 @@ class WaypointCostFunction(CostFunction):
         return cost
 
     def _dist(self, eef_pose, human_pose):
-        #(trans,rot) = self.tf_listener.lookupTransform('/root', '/moving_frame', rospy.Time.now())
         human_pos = human_pose.position
-        #print("human_pos.y: {}".format(human_pos.y))
-        #print("eef_pose[5] {}".format(eef_pose[5]))
         return math.sqrt(math.pow(eef_pose[4] - human_pos.x, 2) +
                          math.pow(eef_pose[5] - human_pos.y, 2) +
                          math.pow(eef_pose[6] - human_pos.z, 2))
@@ -191,36 +282,17 @@ class WaypointCostFunction(CostFunction):
         text_marker.lifetime = rospy.Duration(0)
         markers.markers.append(text_marker)
 
-        arrow_marker = Marker()
-        arrow_marker.header.frame_id = '/world'
-        arrow_marker.header.stamp = rospy.get_rostime()
-        arrow_marker.ns = '/waypoint/arrow'
-        arrow_marker.id = 1
-        arrow_marker.type = Marker.ARROW
-        
-        arrow_marker.pose = Pose(self.human_start_pose.position,Quaternion(0,0,0,1))
-        arrow_marker.scale.x = .1
-        arrow_marker.scale.y = 0.05
-        arrow_marker.scale.z = 0.05
-        arrow_marker.color.r = 1
-        arrow_marker.color.b = 0
-        arrow_marker.color.g = 0
-        arrow_marker.color.a = 0.5
-        arrow_marker.lifetime = rospy.Duration(0)
-        markers.markers.append(arrow_marker)
-
         # end pose
         color_r = random.random()
         color_g = random.random()
         color_b = random.random()
-        rospy.loginfo("current pose {}".format(self.human_start_pose))
         end_marker = Marker()
         end_marker.header.frame_id = '/world'
         end_marker.header.stamp = rospy.get_rostime()
         end_marker.ns = '/waypoint/end_location'
         end_marker.id = 2
         end_marker.type = Marker.SPHERE
-        end_marker.pose = self.human_end_pose
+        end_marker.pose = self.human_goal_pose
         end_marker.scale.x = 0.05
         end_marker.scale.y = 0.05
         end_marker.scale.z = 0.05
@@ -312,7 +384,7 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         rospy.loginfo("Requesting plan from start_pose:\n {} \n goal_pose:\n {}".format(start_pose, goal_pose))
 
         traj = self.jaco_interface.plan(start_pose, goal_pose)
-        rospy.loginfo("Executing trajectory ******* {}".format(traj))
+        #rospy.loginfo("Executing trajectory ******* {}".format(traj))
         m = self.waypoint_cost_func.get_waypoint_markers()
         self.jaco_interface.marker_array_pub.publish(m)
 
