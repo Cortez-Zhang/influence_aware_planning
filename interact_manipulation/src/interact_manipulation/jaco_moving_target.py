@@ -71,14 +71,14 @@ class HumanModel():
         self.params = params
         
         self.human_positions = []
-        self.current_state = copy.deepcopy(start_state) #TODO I need to copy this...I cant just pass it in
+        self.current_state = copy.deepcopy(start_state)
         self.human_positions.append(start_state.position)
 
     def reset_model(self):
         """ Reset the model to prepare for another forward simulation
         """
         self.human_positions = []
-        self.current_state = self.start_state
+        self.current_state = copy.deepcopy(self.start_state)
         self.human_positions.append(self.start_state.position)
         rospy.loginfo("resetting states {} start state is now {}".format(self.human_positions,self.start_state))
 
