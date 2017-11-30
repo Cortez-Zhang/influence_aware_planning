@@ -50,7 +50,7 @@ class HumanState():
     def __str__(self):
         pos = self.position
         vel = self.velocity
-        return '({}, {}, {}; {}, {}, {})'.format(pos.x, pos.y, pos.z, vel.x, vel.y, vel.z)
+        return '({},{})'.format(pos, vel)
     
     __repr__ = __str__
 
@@ -64,22 +64,23 @@ class HumanModel():
     def __init__(self, start_state, goal_pose, simulation_method, dt=.2, params = {'goal_attraction': 0.05, 
                                                                         'robot_repulsion': 0.05,
                                                                         'drag': 0.04,}):
-        self.start_state = start_state
+        self.start_state = copy.deepcopy(start_state)
         self.goal_pose = goal_pose
         self.simulation_method = simulation_method
         self.dt = dt
-        self.human_positions = []
         self.params = params
-        self.current_state = start_state
+        
+        self.human_positions = []
+        self.current_state = copy.deepcopy(start_state) #TODO I need to copy this...I cant just pass it in
+        self.human_positions.append(start_state.position)
 
     def reset_model(self):
+        """ Reset the model to prepare for another forward simulation
         """
-        """
-        self.prev_state = self.start_state
-        rospy.loginfo("start_state {}".format(self.start_state))
-        self.states = []
-        self.states.append(self.start_state)
-        rospy.loginfo("resetting states {}".format(self.states))
+        self.human_positions = []
+        self.current_state = self.start_state
+        self.human_positions.append(self.start_state.position)
+        rospy.loginfo("resetting states {} start state is now {}".format(self.human_positions,self.start_state))
 
     def get_human_positions(self, eef_positions):
         """ Return the predicted positions of the human
@@ -94,7 +95,8 @@ class HumanModel():
         """ Evolve the human state forward using a constant velocity assumption
         """
         self.current_state.position += self.current_state.velocity*self.dt
-        self.human_states.append(self.current_state.position)
+        print(self.current_state.position)
+        self.human_positions.append(self.current_state.position)
 
 class WaypointCostFunction(CostFunction):
     def __init__(self, robot, eef_link_name='j2s7s300_end_effector'):
@@ -106,39 +108,58 @@ class WaypointCostFunction(CostFunction):
         self.human_goal_position = np.array([0,0.216,0.538])
         human_velocity = np.array([.01,0,0])
         self.human_start_state = HumanState(np.array([-0.5,0.216,0.538]), np.array([.01,0,0]))
-        self.human_model = HumanModel(self.human_start_state, self.human_goal_position, human_velocity)
+        self.human_model = HumanModel(self.human_start_state, self.human_goal_position, simulation_method="constant_velocity")
 
         self.eef_link_name = eef_link_name
         self.tf_listener = TransformListener()
         self.robotDOF = 7
 
     def get_cost(self, configs):
+        """ Returns cost based on the distance between the end effector and the human
+            this funciton is given as a callback to trajopt
+            @param configs: a list with (number of robot dof x num way points)
+            given as a callback from trajopt
+            @Return cost: A floating point cost value to be optimized by trajopt
+        """
+        #reshape the list into a ()
         configs = np.asarray(configs)
         configs = np.reshape(configs, (self.robotDOF,-1))
-
-        eef_positions = []
-        for i in range(np.shape(configs)[1]):
-            print i + configs[:,i]
-        #    eef_positions.append(self.get_OpenRaveFK(config, self.eef_link_name))
-        #human_positions = self.human_model.simulate_constant_velocity(eef_positions)
         
-        #distances = np.nan(len(human_positions))
-        #cost = 0.0
-        # for i, (human_position, eef_position) in enumerate(zip(human_positions, eef_positions)):
-        #     distance = np.linalg.norm(human_position - eef_position)
-        #     if distance < self.params['care_about_distance']:
-        #         # assign cost inverse proportional to the distance squared 
-        #         # TODO swap this with something more principled
-        #         cost += self.params['hit_human_penalty'] * 1/(distance**2)
-        # return cost
+        eef_positions = []
+        #use a for loop because I need to calculate kinematics one at a time
+        for i in range(np.shape(configs)[1]):
+            config = configs[:,i]
+            eef_positions.append(self.get_OpenRaveFK(config, self.eef_link_name))
+        human_positions = self.human_model.get_human_positions(eef_positions)
+        self.human_model.reset_model()
+
+        rospy.loginfo("human_positions {}".format(human_positions))
+        
+        #initialize distances to nans, if I accidentally don't fill one I'll get an error
+        distances = np.empty((len(human_positions),))
+        distances[:] = np.nan
+
+        cost = 0.0
+        for i, (human_position, eef_position) in enumerate(zip(human_positions, eef_positions)):
+            #rospy.loginfo("human_position {}".format(human_position))
+            distance = np.linalg.norm(human_position - eef_position)
+            if distance < self.params['care_about_distance']:
+                # assign cost inverse proportional to the distance squared 
+                # TODO swap this with something more principled
+                cost += self.params['hit_human_penalty'] * 1/(distance**2)
+        return cost
 
     def get_OpenRaveFK(self, config, link_name):
+        """ Calculate the forward kinematics using openRAVE for use in cost evaluation.
+            @Param config: Robot joint configuration (3,) numpy array
+            @Param link_name: Name of the link to calculate forward kinematics for
+        """
         q = config.tolist()
         self.robot.SetDOFValues(q + [0.0, 0.0, 0.0])
         eef_link = self.robot.GetLink(link_name)
         if eef_link is None:
             rospy.logerror("Error: end-effector \"{}\" does not exist".format(self.eef_link_name))
-            return 0.0
+            raise ValueError("Error: end-effector \"{}\" does not exist".format(self.eef_link_name))
         eef_pose = openravepy.poseFromMatrix(eef_link.GetTransform())
         return np.array([eef_pose[4], eef_pose[5], eef_pose[6]])
 
