@@ -5,6 +5,7 @@ import openravepy
 import rospy
 import random
 import copy
+import numpy as np
 
 from interactive_markers.interactive_marker_server import *
 from interactive_markers.menu_handler import *
