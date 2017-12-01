@@ -16,8 +16,9 @@ from jaco_trajopt import CostFunction
 from geometry_msgs.msg import *
 from tf import TransformBroadcaster, TransformListener
 from math import sin
-from std_msgs.msg import Empty
+from std_msgs.msg import Empty, Float64MultiArray
 
+import marker_wrapper
 
 class HumanState():
     """Stores the state of a human
@@ -73,14 +74,17 @@ class HumanModel():
         self.human_positions = []
         self.current_state = copy.deepcopy(start_state)
         self.human_positions.append(start_state.position)
+       
+        marker_wrapper.show_position_marker(label="human \n start", position = start_state.position)
 
     def reset_model(self):
         """ Reset the model to prepare for another forward simulation
         """
+        #marker_wrapper.show_position_marker(label="human \n endstate", position = self.current_state.position)
+
         self.human_positions = []
         self.current_state = copy.deepcopy(self.start_state)
         self.human_positions.append(self.start_state.position)
-        rospy.loginfo("resetting states {} start state is now {}".format(self.human_positions,self.start_state))
 
     def get_human_positions(self, eef_positions):
         """ Return the predicted positions of the human
@@ -95,21 +99,15 @@ class HumanModel():
         """ Evolve the human state forward using a constant velocity assumption
         """
         self.current_state.position += self.current_state.velocity*self.dt
-        print(self.current_state.position)
         self.human_positions.append(self.current_state.position)
 
 class WaypointCostFunction(CostFunction):
-    def __init__(self, robot, eef_link_name='j2s7s300_end_effector'):
+    def __init__(self, robot, human_model,eef_link_name='j2s7s300_end_effector'):
         CostFunction.__init__(self, params={'hit_human_penalty': 0.5,
                                             'normalize_sigma': 1.0,
                                             'care_about_distance': 0.1})
         self.robot = robot
-        human_start_position = np.array([-0.5,0.216,0.538])
-        self.human_goal_position = np.array([0,0.216,0.538])
-        human_velocity = np.array([.01,0,0])
-        self.human_start_state = HumanState(np.array([-0.5,0.216,0.538]), np.array([.01,0,0]))
-        self.human_model = HumanModel(self.human_start_state, self.human_goal_position, simulation_method="constant_velocity")
-
+        self.human_model = human_model
         self.eef_link_name = eef_link_name
         self.tf_listener = TransformListener()
         self.robotDOF = 7
@@ -130,10 +128,9 @@ class WaypointCostFunction(CostFunction):
         for i in range(np.shape(configs)[1]):
             config = configs[:,i]
             eef_positions.append(self.get_OpenRaveFK(config, self.eef_link_name))
-        human_positions = self.human_model.get_human_positions(eef_positions)
+        
         self.human_model.reset_model()
-
-        rospy.loginfo("human_positions {}".format(human_positions))
+        human_positions = self.human_model.get_human_positions(eef_positions)
         
         #initialize distances to nans, if I accidentally don't fill one I'll get an error
         distances = np.empty((len(human_positions),))
@@ -147,6 +144,7 @@ class WaypointCostFunction(CostFunction):
                 # assign cost inverse proportional to the distance squared 
                 # TODO swap this with something more principled
                 cost += self.params['hit_human_penalty'] * 1/(distance**2)
+        #print cost
         return cost
 
     def get_OpenRaveFK(self, config, link_name):
@@ -162,71 +160,6 @@ class WaypointCostFunction(CostFunction):
             raise ValueError("Error: end-effector \"{}\" does not exist".format(self.eef_link_name))
         eef_pose = openravepy.poseFromMatrix(eef_link.GetTransform())
         return np.array([eef_pose[4], eef_pose[5], eef_pose[6]])
-
-    def get_waypoint_markers(self):
-        pass
-        # markers = MarkerArray()
-
-        # # Choose a random color for this body
-        # color_r = random.random()
-        # color_g = random.random()
-        # color_b = random.random()
-        # rospy.loginfo("current pose {}".format(self.human_start_pose))
-        # waypoint_marker = Marker()
-        # waypoint_marker.header.frame_id = '/world'
-        # waypoint_marker.header.stamp = rospy.get_rostime()
-        # waypoint_marker.ns = '/waypoint'
-        # waypoint_marker.id = 1
-        # waypoint_marker.type = Marker.SPHERE
-        # waypoint_marker.pose = self.human_start_state.position
-        # waypoint_marker.scale.x = 0.05
-        # waypoint_marker.scale.y = 0.05
-        # waypoint_marker.scale.z = 0.05
-        # waypoint_marker.color.r = color_r
-        # waypoint_marker.color.g = color_g
-        # waypoint_marker.color.b = color_b
-        # waypoint_marker.color.a = 0.50
-        # waypoint_marker.lifetime = rospy.Duration(0)
-        # markers.markers.append(waypoint_marker)
-
-        # text_marker = Marker()
-        # text_marker.header.frame_id = '/world'
-        # text_marker.header.stamp = rospy.get_rostime()
-        # text_marker.ns = '/waypoint/text'
-        # text_marker.id = 1
-        # text_marker.type = Marker.TEXT_VIEW_FACING
-        # text_marker.pose = self.human_start_pose
-        # text_marker.scale.z = 0.05
-        # text_marker.color.r = color_r
-        # text_marker.color.g = color_g
-        # text_marker.color.b = color_b
-        # text_marker.color.a = 0.50
-        # text_marker.text = 'Human starts here'
-        # text_marker.lifetime = rospy.Duration(0)
-        # markers.markers.append(text_marker)
-
-        # # end pose
-        # color_r = random.random()
-        # color_g = random.random()
-        # color_b = random.random()
-        # end_marker = Marker()
-        # end_marker.header.frame_id = '/world'
-        # end_marker.header.stamp = rospy.get_rostime()
-        # end_marker.ns = '/waypoint/end_location'
-        # end_marker.id = 2
-        # end_marker.type = Marker.SPHERE
-        # end_marker.pose = self.human_goal_pose
-        # end_marker.scale.x = 0.05
-        # end_marker.scale.y = 0.05
-        # end_marker.scale.z = 0.05
-        # end_marker.color.r = color_r
-        # end_marker.color.g = color_g
-        # end_marker.color.b = color_b
-        # end_marker.color.a = 0.50
-        # end_marker.lifetime = rospy.Duration(0)
-        # markers.markers.append(end_marker)
-
-        # return markers
     
 class InteractiveMarkerAgent():
     def __init__(self, server_name, position, menu_labels=[], base_frame = "root", scale = .15):
@@ -266,7 +199,7 @@ class InteractiveMarkerAgent():
 
 class AssertiveRobotPlanner(InteractiveMarkerAgent):
     def __init__(self):
-        initial_position = Point(-0.5,0.216,0.538)
+        initial_position = Point(-0.5,0.216,0.538) #initial position of the marker
         menu_label_list = []
         menu_label_list.append("Plan and Execute")
         menu_label_list.append("Reset Human")
@@ -274,14 +207,13 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         InteractiveMarkerAgent.__init__(self, "End_Goal", initial_position, menu_labels=menu_label_list)
 
         self.jaco_interface = JacoInterface()
-        self.waypoint_cost_func = WaypointCostFunction(self.jaco_interface.planner.jaco)
-
         self.make6DofMarker(False, InteractiveMarkerControl.MOVE_ROTATE_3D, True )
         self.server.applyChanges()
 
-        self.start_human_pub = rospy.Publisher("start_human", Pose, queue_size=10)
-        self.reset_human_pub = rospy.Publisher("reset_human", Pose, queue_size=10)
+        self.start_human_pub = rospy.Publisher("start_human",Float64MultiArray , queue_size=10)
+        self.reset_human_pub = rospy.Publisher("reset_human",Empty, queue_size=10)
         self.human_start_pose = Pose(Point(-0.5,0.216,0.538),Quaternion(0,0,0,1))
+    
     def _onclick_callback(self, feedback):
         if feedback.event_type == InteractiveMarkerFeedback.MENU_SELECT:
             if feedback.menu_entry_id == 1:
@@ -292,31 +224,42 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
                 self.reset_human_pub.publish(self.human_start_pose)
             elif feedback.menu_entry_id == 3:
                 self.jaco_interface.home()
-
         self.server.applyChanges()
 
     def _plan_and_execute(self, feedback):
-        self.jaco_interface.planner.cost_functions = [self.waypoint_cost_func]
-        self.jaco_interface.planner.trajopt_num_waypoints = 20
-
         goal_pose = PoseStamped()
         goal_pose.header = feedback.header
         goal_pose.pose = feedback.pose
+        
+        human_goal_position = np.array([0,0.216,0.538])
+        human_start_state = HumanState(np.array([-0.5,0.216,0.538]), np.array([.1,0,0]))
+        human_model = HumanModel(human_start_state, human_goal_position, simulation_method="constant_velocity")
 
+        cost_func = WaypointCostFunction(self.jaco_interface.planner.jaco, human_model)
+        self.jaco_interface.planner.cost_functions = [cost_func]
+        self.jaco_interface.planner.trajopt_num_waypoints = 20
+        
         start_pose = self.jaco_interface.arm_group.get_current_pose()
         rospy.loginfo("Requesting plan from start_pose:\n {} \n goal_pose:\n {}".format(start_pose, goal_pose))
 
         traj = self.jaco_interface.plan(start_pose, goal_pose)
-        #rospy.loginfo("Executing trajectory ******* {}".format(traj))
-        #m = self.waypoint_cost_func.get_waypoint_markers()
-        #self.jaco_interface.marker_array_pub.publish(m)
 
-        #self.start_human_pub.publish(self.human_start_pose)
+        marker_wrapper.show_position_marker(human_model.human_positions[-1],label="human end")
+        
+        trajmsg = self._to_trajectory_message(human_model.human_positions)
+        self.start_human_pub.publish(trajmsg)
+
         self.jaco_interface.execute(traj)
 
+    def _to_trajectory_message(self, positions):
+        float_array = Float64MultiArray()
+        for position in positions:
+            float_array.append(position.tolist())
+
+        return float_array
+    
     def run(self):        
         self.jaco_interface.home()
-
         rospy.spin()
 
     def make6DofMarker(self, fixed, interaction_mode, show_6dof = False):
