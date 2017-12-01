@@ -16,7 +16,7 @@ from jaco_trajopt import CostFunction
 from geometry_msgs.msg import *
 from tf import TransformBroadcaster, TransformListener
 from math import sin
-from std_msgs.msg import Empty, Float64MultiArray
+from std_msgs.msg import Empty, Float32MultiArray, MultiArrayLayout, MultiArrayDimension
 
 import marker_wrapper
 
@@ -90,16 +90,24 @@ class HumanModel():
         """ Return the predicted positions of the human
             @Param eef_positions: a list of (3,) numpy arrays 
         """
+        #rospy.loginfo("eef_positions {}".format(eef_positions))
+        
+        advance_model = getattr(self, self.simulation_method)
         for eef_position in eef_positions:
-            advance_model = getattr(self, self.simulation_method)
+            #rospy.loginfo("eef_position {}".format(eef_position))
             advance_model(eef_position)
+        #rospy.loginfo("human_positions {}".format(self.human_positions))
         return self.human_positions
     
     def constant_velocity(self, eef_position):
         """ Evolve the human state forward using a constant velocity assumption
         """
-        self.current_state.position += self.current_state.velocity*self.dt
-        self.human_positions.append(self.current_state.position)
+        #rospy.loginfo("current_state {}".format(self.current_state))
+        curr_pos = self.current_state.position
+        next_pos = curr_pos + self.current_state.velocity*self.dt
+        self.current_state.position = next_pos
+
+        self.human_positions.append(next_pos)
 
 class WaypointCostFunction(CostFunction):
     def __init__(self, robot, human_model,eef_link_name='j2s7s300_end_effector'):
@@ -169,7 +177,7 @@ class InteractiveMarkerAgent():
         self.menu_labels = menu_labels
         self.setup_menu_handler()
         self.marker_position = Point(position.x, position.y, position.z)
-        self._base_frame = base_frame
+        self.base_frame = base_frame
 
     def setup_menu_handler(self):
         for menu_label in self.menu_labels:
@@ -210,7 +218,7 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         self.make6DofMarker(False, InteractiveMarkerControl.MOVE_ROTATE_3D, True )
         self.server.applyChanges()
 
-        self.start_human_pub = rospy.Publisher("start_human",Float64MultiArray , queue_size=10)
+        self.start_human_pub = rospy.Publisher("start_human",Float32MultiArray , queue_size=10)
         self.reset_human_pub = rospy.Publisher("reset_human",Empty, queue_size=10)
         self.human_start_pose = Pose(Point(-0.5,0.216,0.538),Quaternion(0,0,0,1))
     
@@ -227,34 +235,60 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         self.server.applyChanges()
 
     def _plan_and_execute(self, feedback):
+
+        #create the goal_pose request
         goal_pose = PoseStamped()
         goal_pose.header = feedback.header
         goal_pose.pose = feedback.pose
         
+        #create the human model
         human_goal_position = np.array([0,0.216,0.538])
         human_start_state = HumanState(np.array([-0.5,0.216,0.538]), np.array([.1,0,0]))
         human_model = HumanModel(human_start_state, human_goal_position, simulation_method="constant_velocity")
 
+        #create the robot cost function, including human model
         cost_func = WaypointCostFunction(self.jaco_interface.planner.jaco, human_model)
         self.jaco_interface.planner.cost_functions = [cost_func]
         self.jaco_interface.planner.trajopt_num_waypoints = 20
         
+        #get the location of the robot and use that as the start pose
         start_pose = self.jaco_interface.arm_group.get_current_pose()
         rospy.loginfo("Requesting plan from start_pose:\n {} \n goal_pose:\n {}".format(start_pose, goal_pose))
 
+        #call trajopt
         traj = self.jaco_interface.plan(start_pose, goal_pose)
 
+        #display the end position of the human
         marker_wrapper.show_position_marker(human_model.human_positions[-1],label="human end")
         
+        #package up the human trajectory into a message
         trajmsg = self._to_trajectory_message(human_model.human_positions)
+        
+        #print(trajmsg)
+        #send the human trajectory to an interactive marker for visualization
         self.start_human_pub.publish(trajmsg)
-
         self.jaco_interface.execute(traj)
 
     def _to_trajectory_message(self, positions):
-        float_array = Float64MultiArray()
+        float_array = Float32MultiArray()
+        
+        layout = MultiArrayLayout()
+        layout.data_offset = 0
+
+        dims = []
+        dim = MultiArrayDimension()
+        dim.label = "traj"
+        dim.size = 0
+        dim.stride = 0
+        dims.append(dim)
+
+        layout.dim = dims
+
+        float_list = []
         for position in positions:
-            float_array.append(position.tolist())
+            float_list.extend(position.tolist())
+        float_array.data = float_list
+        float_array.layout = layout
 
         return float_array
     
@@ -264,7 +298,7 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
 
     def make6DofMarker(self, fixed, interaction_mode, show_6dof = False):
         int_marker = InteractiveMarker()
-        int_marker.header.frame_id = self._base_frame
+        int_marker.header.frame_id = self.base_frame
         int_marker.pose.position = self.marker_position
         int_marker.pose.orientation = Quaternion(.707,0,0,-.707)
         int_marker.scale = self._scale
