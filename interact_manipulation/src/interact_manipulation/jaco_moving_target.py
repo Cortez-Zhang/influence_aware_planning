@@ -75,7 +75,7 @@ class HumanModel():
         self.current_state = copy.deepcopy(start_state)
         self.human_positions.append(start_state.position)
        
-        marker_wrapper.show_position_marker(label="human \n start", position = start_state.position)
+        #marker_wrapper.show_position_marker(label="human \n start", position = start_state.position)
 
     def reset_model(self):
         """ Reset the model to prepare for another forward simulation
@@ -108,12 +108,17 @@ class HumanModel():
         self.current_state.position = next_pos
 
         self.human_positions.append(next_pos)
+    def point_mass(self, eef_position):
+        """ Evolve the human state forward using a point mass model
+            We assume the human will move away from the robot and towards its goal
+        """
+        curr_pos = self.current_state.position
 
 class WaypointCostFunction(CostFunction):
     def __init__(self, robot, human_model,eef_link_name='j2s7s300_end_effector'):
         CostFunction.__init__(self, params={'hit_human_penalty': 0.5,
                                             'normalize_sigma': 1.0,
-                                            'care_about_distance': 0.1})
+                                            'care_about_distance': 0.2})
         self.robot = robot
         self.human_model = human_model
         self.eef_link_name = eef_link_name
@@ -130,6 +135,7 @@ class WaypointCostFunction(CostFunction):
         #reshape the list into a ()
         configs = np.asarray(configs)
         configs = np.reshape(configs, (self.robotDOF,-1))
+        #rospy.loginfo("configurations {}".format(configs))
         
         eef_positions = []
         #use a for loop because I need to calculate kinematics one at a time
@@ -139,7 +145,7 @@ class WaypointCostFunction(CostFunction):
         
         self.human_model.reset_model()
         human_positions = self.human_model.get_human_positions(eef_positions)
-        
+        #rospy.loginfo("eef positons: {}".format(human_positions))
         #initialize distances to nans, if I accidentally don't fill one I'll get an error
         distances = np.empty((len(human_positions),))
         distances[:] = np.nan
@@ -152,7 +158,7 @@ class WaypointCostFunction(CostFunction):
                 # assign cost inverse proportional to the distance squared 
                 # TODO swap this with something more principled
                 cost += self.params['hit_human_penalty'] * 1/(distance**2)
-        #print cost
+
         return cost
 
     def get_OpenRaveFK(self, config, link_name):
@@ -243,7 +249,7 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         
         #create the human model
         human_goal_position = np.array([0,0.216,0.538])
-        human_start_state = HumanState(np.array([-0.5,0.216,0.538]), np.array([.1,0,0]))
+        human_start_state = HumanState(np.array([-0.5,0.216,0.538]), np.array([.05,0,0]))
         human_model = HumanModel(human_start_state, human_goal_position, simulation_method="constant_velocity")
 
         #create the robot cost function, including human model
@@ -258,8 +264,8 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         #call trajopt
         traj = self.jaco_interface.plan(start_pose, goal_pose)
 
-        #display the end position of the human
-        marker_wrapper.show_position_marker(human_model.human_positions[-1],label="human end")
+        #display the end position of the human #TODO republishing here causes stale data
+        marker_wrapper.show_position_marker(human_model.human_positions[-1], label="human end")
         
         #package up the human trajectory into a message
         trajmsg = self._to_trajectory_message(human_model.human_positions)
