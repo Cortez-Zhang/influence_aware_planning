@@ -59,7 +59,8 @@ class JacoInterface:
 
     def plan(self, start_pose, goal_pose):
         """ Plan from the start pose to the goal pose """
-
+        #markers.add_position_marker(pose = start_pose.pose, label = , color = (1,0,0))
+       
         # Visualize the start pose
         start_marker = Marker()
         start_marker.header.frame_id = start_pose.header.frame_id

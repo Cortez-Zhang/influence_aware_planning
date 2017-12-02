@@ -99,7 +99,7 @@ class JacoTrajopt:
                 link_transform = link.GetTransform()
 
                 link_marker = Marker()
-                link_marker.header.frame_id = '/world'
+                link_marker.header.frame_id = '/root'
                 link_marker.header.stamp = rospy.get_rostime()
                 link_marker.ns = body.GetName() + '/link/' + link.GetName()
                 link_marker.id = 0
