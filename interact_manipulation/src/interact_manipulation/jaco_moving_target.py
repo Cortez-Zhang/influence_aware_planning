@@ -58,15 +58,16 @@ class HumanState():
 class HumanModel():
     """ Simulates a human for use in path planning (trajopt)
         @Param start_state: starting HumanState object
-        @Param goal_pose: The known goal_pose of the human (3,1) numpy array
+        @Param goal_pos: The known goal_position of the human (3,1) numpy array
         @param simulation method: The method in which to simulate the human e.g. constant velocity
         @param dt: the fixed time between waypoints (default 0.2)
     """
-    def __init__(self, start_state, goal_pose, simulation_method, dt=.2, params = {'goal_attraction': 0.05, 
-                                                                        'robot_repulsion': 0.05,
-                                                                        'drag': 0.04,}):
+    def __init__(self, start_state, goal_pos, simulation_method, dt=.2, params = {'goal_attraction': .01, 
+                                                                        'robot_repulsion': 0.003,
+                                                                        'drag': 0,
+                                                                        'force_cap': 0.02}):
         self.start_state = copy.deepcopy(start_state)
-        self.goal_pose = goal_pose
+        self.goal_pos = goal_pos
         self.simulation_method = simulation_method
         self.dt = dt
         self.params = params
@@ -74,7 +75,7 @@ class HumanModel():
         self.human_positions = []
         self.current_state = copy.deepcopy(start_state)
         self.human_positions.append(start_state.position)
-       
+        #self.care_about_distance = .2
         #marker_wrapper.show_position_marker(label="human \n start", position = start_state.position)
 
     def reset_model(self):
@@ -108,11 +109,52 @@ class HumanModel():
         self.current_state.position = next_pos
 
         self.human_positions.append(next_pos)
+        
     def point_mass(self, eef_position):
         """ Evolve the human state forward using a point mass model
             We assume the human will move away from the robot and towards its goal
         """
         curr_pos = self.current_state.position
+        curr_vel = self.current_state.velocity
+
+        F_repulse = -1*self.params["robot_repulsion"]*self.potential_field(eef_position,curr_pos)
+        #*direction_from_robot*self.obstacle_penalty_cost(dist_from_robot)
+        F_attract = self.params["goal_attraction"]*self.potential_field(self.goal_pos,curr_pos)
+        #*direction_to_goal*self.obstacle_penalty_cost(dist_to_goal)
+        F_drag = -1*self.params["drag"]*curr_vel
+        print(F_drag)
+        acc = F_attract+F_drag+F_repulse
+
+        next_vel = curr_vel+acc*self.dt
+        next_pos = 0.5*acc*self.dt**2+curr_vel*self.dt+curr_pos
+
+        self.current_state.position = next_pos
+        self.current_state.velocity = next_vel
+
+        self.human_positions.append(next_pos)
+
+    def potential_field(self, obstacle, curr_pos):
+        """ Calculate distance penalty for obstacles as in CHOMP paper
+            @Param obstacle: a (3,) numpy array with position of obstacle or goal
+            @Param curr_pos: a (3,) numpy array with position of human
+        """ 
+        #TODO vectorize this using vectorized comparisons
+        epsilon = self.params["force_cap"]
+
+        force = np.empty((3,))
+
+        dist = obstacle-curr_pos
+        dist_norm = np.linalg.norm(dist)
+        direction = dist/dist_norm
+        if dist_norm < epsilon:
+            dist_norm = epsilon
+         
+        #if dist_norm <.001:
+        #    direction = np.zeros()
+        #else:
+        
+        return direction/dist_norm
+        #return force
 
 class WaypointCostFunction(CostFunction):
     def __init__(self, robot, human_model,eef_link_name='j2s7s300_end_effector'):
