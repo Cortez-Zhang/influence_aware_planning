@@ -63,7 +63,7 @@ class HumanModel():
         @param dt: the fixed time between waypoints (default 0.2)
     """
     def __init__(self, start_state, goal_pos, simulation_method, dt=.2, params = {'mass': .006, 
-                                                                        'robot_aggressiveness': 0.1,
+                                                                        'robot_aggressiveness': .7,
                                                                         'drag': 0,
                                                                         'force_cap': 0.02}):
         self.start_state = copy.deepcopy(start_state)
@@ -76,7 +76,7 @@ class HumanModel():
         self.current_state = copy.deepcopy(start_state)
         self.human_positions.append(start_state.position)
         #self.care_about_distance = .2
-        marker_wrapper.show_position_marker(label="human \n start", position = start_state.position)
+        marker_wrapper.show_position_marker(label="human \n start", position = start_state.position, ident=1)
 
     def reset_model(self):
         """ Reset the model to prepare for another forward simulation
@@ -307,19 +307,22 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         #call trajopt
         traj = self.jaco_interface.plan(start_pose, goal_pose)
 
-        #display the end position of the human #TODO republishing here causes stale data
-        marker_wrapper.show_position_marker(human_model.human_positions[-1], label="human end")
+        marker_wrapper.show_position_marker(human_model.human_positions[-1], label="human end", ident=2)
         
         #package up the human trajectory into a message
-        trajmsg = self._to_trajectory_message(human_model.human_positions)
+        #trajmsg = self._to_trajectory_message(human_model.human_positions)
         
-        #print(trajmsg)
-        #send the human trajectory to an interactive marker for visualization
-        self.start_human_pub.publish(trajmsg)
-        time_before = rospy.get_time()
-        #rospy.loginfo("time before execute {}".format(rospy.get_time()))
-        self.jaco_interface.execute(traj)
-        rospy.loginfo("time to execute {}".format(rospy.get_time()-time_before))
+        #send the humna trajectory to an interactive marker for visualization
+        #self.start_human_pub.publish(trajmsg)
+        #time_before = rospy.get_time()
+
+        robot_positions = traj.joint_trajectory.points
+        human_positions = human_model.human_positions
+        simulator = SimplePointSimulator(robot_positions, human_positions, self.jaco_interface)
+        simulator.simulate()
+
+        #self.jaco_interface.execute(traj)
+        #rospy.loginfo("time to execute {}".format(rospy.get_time()-time_before))
 
     def _to_trajectory_message(self, positions):
         float_array = Float32MultiArray()
@@ -446,7 +449,88 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
 
         self.server.insert(int_marker, self._onclick_callback)
         self.menu_handler.apply( self.server, int_marker.name )
+
+class SimplePointSimulator():
+    def __init__(self, robot_positions, human_positions, jaco_interface):
+        self.Timer = None
+        
+        self.simulated_dt = 0.2 #TODO set these better
+        self.playback_dt = 0.02
+
+        self.counter = 0
+
+        self.jaco_interface = jaco_interface
+        self.human_positions = self.process_human_positions(human_positions)
+        self.robot_positions = self.process_robot_positions(robot_positions)
+        rospy.loginfo("human_positions {}".format(self.human_positions))
+        rospy.loginfo("robot_positions {}".format(self.robot_positions))
+        rospy.loginfo("human shape {}".format(np.shape(self.human_positions)))
+        rospy.loginfo("robot shape {}".format(np.shape(self.robot_positions)))
+        assert len(self.human_positions)==len(self.robot_positions)
+        
+    def simulate(self):
+        self.Timer = rospy.Timer(rospy.Duration(self.playback_dt), self._advance_models_callback)
+  
+    def _advance_models_callback(self,msg):
+        self.counter +=1
+        if self.counter < len(self.human_positions):
+            marker_wrapper.show_position_marker(self.human_positions[self.counter], "human", ident = 3)
+            marker_wrapper.show_position_marker(self.robot_positions[self.counter], "robot", ident = 4)
+        else:
+            self.Timer.shutdown()
+            self.counter = 0
+
+    def process_robot_positions(self, robot_positions):
+        processed_positions = []
+        for point in robot_positions:
+            joints = point.positions
+            pose = self.jaco_interface.fk(joints)
+            pos = pose.pose_stamped[0].pose.position
+            position = np.array([pos.x,pos.y,pos.z])
+            processed_positions.append(position)
+        
+        return self.interpolate_positions(np.asarray(processed_positions))
+
+    def process_human_positions(self, human_positions):
+        rospy.loginfo("human_positions {}".format(human_positions))
+        human_pos = np.asarray(human_positions)
+        return self.interpolate_positions(human_pos[0:-1,:])
     
+    def interpolate_positions(self, sim_pos):
+        """ Interpolates simulated_positions and sets self.playback_positions (3,num_playback_wpts)
+            numpy array
+            @Param sim_pos: A (num_sim_wpts,3) numpy array
+        """
+        num_sim_wpts = 20 #TODO set this with a parameter server var
+        end_time = num_sim_wpts*self.simulated_dt
+        num_playback_wpts = end_time/self.playback_dt
+
+        rospy.loginfo("np.shape(sim_pos)[1] {}".format(np.shape(sim_pos)[0]))
+        rospy.loginfo("num_sim_wpts {}".format(num_sim_wpts))
+
+        assert np.shape(sim_pos)[0] == num_sim_wpts
+
+        x = np.linspace(0, end_time, num=num_sim_wpts, endpoint=True)
+        y = np.linspace(0, end_time, num=num_sim_wpts, endpoint=True)
+        z = np.linspace(0, end_time, num=num_sim_wpts, endpoint=True)
+
+        xnew = np.linspace(0, end_time, num=num_playback_wpts, endpoint=True)
+        ynew = np.linspace(0, end_time, num=num_playback_wpts, endpoint=True)
+        znew = np.linspace(0, end_time, num=num_playback_wpts, endpoint=True)
+
+        playback_pos = np.empty((num_playback_wpts,3))
+        playback_pos[:] = np.nan
+
+        rospy.loginfo("sim_pos shape: {}".format(np.shape(sim_pos)))
+        playback_pos[:,0] = np.interp(xnew, x, sim_pos[:,0])
+        playback_pos[:,1] = np.interp(ynew, y, sim_pos[:,1])
+        playback_pos[:,2] = np.interp(znew, z, sim_pos[:,2])
+        rospy.loginfo("playback_pos {}".format(playback_pos))
+
+        return playback_pos
+
+
+
 if __name__=="__main__":
     moveit_commander.roscpp_initialize(sys.argv)
     rospy.init_node('jaco_moving_target')
