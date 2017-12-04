@@ -49,7 +49,7 @@ class JacoInterface:
         except rospy.ServiceException, e:
             print("IK service call failed: {}".format(e))
 
-    def fk(self, joints, links):
+    def fk(self, joints, links=['j2s7s300_end_effector']):
         """ Computes the forward kinematics """
         header = Header()
         robot_state = RobotState()
@@ -103,6 +103,7 @@ class JacoInterface:
         if not goal_config:
             rospy.logerr("Inverse kinematics returned empty, No solution foudn")
             traj = None
+            
         else:
             res = self.ik(start_pose)
             start_config = [q for q in res.solution.joint_state.position[0:7]]
