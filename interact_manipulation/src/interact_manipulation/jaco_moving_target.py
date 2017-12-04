@@ -77,7 +77,7 @@ class HumanModel():
         self.human_positions.append(start_state.position)
         #self.care_about_distance = .2
         marker_wrapper.show_position_marker(label="human \n start", position = start_state.position, ident=1)
-
+        marker_wrapper.show_position_marker(label="human \n goal", position= goal_pos, ident=2)
     def reset_model(self):
         """ Reset the model to prepare for another forward simulation
         """
@@ -198,8 +198,8 @@ class WaypointCostFunction(CostFunction):
                 # assign cost inverse proportional to the distance squared 
                 # TODO swap this with something more principled
                 cost += self.params['hit_human_penalty'] * 1/(distance**2)
-
-        return cost
+        
+        return cost/2
 
     def get_OpenRaveFK(self, config, link_name):
         """ Calculate the forward kinematics using openRAVE for use in cost evaluation.
@@ -307,7 +307,7 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         #call trajopt
         traj = self.jaco_interface.plan(start_pose, goal_pose)
 
-        marker_wrapper.show_position_marker(human_model.human_positions[-1], label="human end", ident=2)
+        marker_wrapper.show_position_marker(human_model.human_positions[-1], label="human end", ident=3)
         
         #package up the human trajectory into a message
         #trajmsg = self._to_trajectory_message(human_model.human_positions)
@@ -469,15 +469,23 @@ class SimplePointSimulator():
         assert len(self.human_positions)==len(self.robot_positions)
         
     def simulate(self):
-        self.Timer = rospy.Timer(rospy.Duration(self.playback_dt), self._advance_models_callback)
+        if not self.Timer:
+            self.Timer = rospy.Timer(rospy.Duration(self.playback_dt), self._advance_models_callback)
   
     def _advance_models_callback(self,msg):
-        self.counter +=1
+
+
         if self.counter < len(self.human_positions):
-            marker_wrapper.show_position_marker(self.human_positions[self.counter], "human", ident = 3)
-            marker_wrapper.show_position_marker(self.robot_positions[self.counter], "robot", ident = 4)
+            human_pos = self.human_positions[self.counter]
+            robot_pos = self.robot_positions[self.counter]
+            if self.counter == 0:
+                rospy.loginfo("human positions: {} for counter = {}".format(human_pos, self.counter))
+                rospy.loginfo("robot positions: {} for counter = {}".format(robot_pos, self.counter))
+            
+            marker_wrapper.show_position_marker(human_pos, label="human", ident = 4)
+            marker_wrapper.show_position_marker(robot_pos, "robot", ident = 5)
+            self.counter +=1
         else:
-            self.Timer.shutdown()
             self.counter = 0
 
     def process_robot_positions(self, robot_positions):
