@@ -6,6 +6,7 @@ import random
 import copy
 import time
 import numpy as np
+import datetime
 
 from interactive_markers.interactive_marker_server import *
 from interactive_markers.menu_handler import *
@@ -63,7 +64,7 @@ class HumanModel():
         @param dt: the fixed time between waypoints (default 0.2)
     """
     def __init__(self, start_state, goal_pos, simulation_method, dt=.2, params = {'mass': .006, 
-                                                                        'robot_aggressiveness': .7,
+                                                                        'robot_aggressiveness': .3,
                                                                         'drag': 0,
                                                                         'force_cap': 0.02}):
         self.start_state = copy.deepcopy(start_state)
@@ -76,14 +77,15 @@ class HumanModel():
         self.current_state = copy.deepcopy(start_state)
         self.human_positions.append(start_state.position)
         #self.care_about_distance = .2
-        marker_wrapper.show_position_marker(label="human \n start", position = start_state.position, ident=1)
-        marker_wrapper.show_position_marker(label="human \n goal", position= goal_pos, ident=2)
+        marker_wrapper.show_position_marker(label="human \n start\n\n", position = start_state.position, ident=1, color=(1,0,0))
+        marker_wrapper.show_position_marker(label="human \n goal\n\n", position= goal_pos, ident=2, color=(0,1,0))
     def reset_model(self):
         """ Reset the model to prepare for another forward simulation
         """
         #marker_wrapper.show_position_marker(label="human \n endstate", position = self.current_state.position)
 
         self.human_positions = []
+        self.human_velocities = []
         self.current_state = copy.deepcopy(self.start_state)
         self.human_positions.append(self.start_state.position)
 
@@ -129,6 +131,7 @@ class HumanModel():
         self.current_state.position = next_pos
         self.current_state.velocity = next_vel
 
+        self.human_velocities.append(next_vel)
         self.human_positions.append(next_pos)
 
     def potential_field(self, obstacle, curr_pos):
@@ -185,11 +188,26 @@ class WaypointCostFunction(CostFunction):
         
         self.human_model.reset_model()
         human_positions = self.human_model.get_human_positions(eef_positions)
+        human_velocities = self.human_model.human_velocities
+
         #rospy.loginfo("eef positons: {}".format(human_positions))
         #initialize distances to nans, if I accidentally don't fill one I'll get an error
-        distances = np.empty((len(human_positions),))
-        distances[:] = np.nan
+        #distances = np.empty((len(human_positions),))
+        #distances[:] = np.nan
+        
+        #self.human_closeness_cost(human_positions, eef_positions)
 
+        return self.human_speed_cost(human_velocities)
+    
+    def human_speed_cost(self, human_velocities):
+        cost = 0.0
+        for vel in human_velocities:
+            speed = np.linalg.norm(vel)
+            #rospy.loginfo(speed)
+            cost+=speed
+        return cost
+           
+    def human_closeness_cost(self,human_positions,eef_positions):
         cost = 0.0
         for i, (human_position, eef_position) in enumerate(zip(human_positions, eef_positions)):
             #rospy.loginfo("human_position {}".format(human_position))
@@ -197,9 +215,10 @@ class WaypointCostFunction(CostFunction):
             if distance < self.params['care_about_distance']:
                 # assign cost inverse proportional to the distance squared 
                 # TODO swap this with something more principled
-                cost += self.params['hit_human_penalty'] * 1/(distance**2)
-        
-        return cost/2
+                cost += self.params['hit_human_penalty'] * 1/(distance)
+        #SimplePointSimulator(eef_positions, human_positions, repeat=False).simulate()
+        return cost/2.0
+        #return cost 
 
     def get_OpenRaveFK(self, config, link_name):
         """ Calculate the forward kinematics using openRAVE for use in cost evaluation.
@@ -251,6 +270,8 @@ class InteractiveMarkerAgent():
         msg.controls.append( control )
         return control
 
+#class data
+
 class AssertiveRobotPlanner(InteractiveMarkerAgent):
     def __init__(self):
         initial_position = Point(-0.5,0.216,0.538) #initial position of the marker
@@ -267,7 +288,9 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         self.start_human_pub = rospy.Publisher("start_human",Float32MultiArray , queue_size=10)
         self.reset_human_pub = rospy.Publisher("reset_human",Empty, queue_size=10)
         self.human_start_pose = Pose(Point(-0.5,0.216,0.538),Quaternion(0,0,0,1))
-    
+
+        #np.save('human_position {}'.format(datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')) 
+        #np.save
     def _onclick_callback(self, feedback):
         if feedback.event_type == InteractiveMarkerFeedback.MENU_SELECT:
             if feedback.menu_entry_id == 1:
@@ -307,7 +330,7 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         #call trajopt
         traj = self.jaco_interface.plan(start_pose, goal_pose)
 
-        marker_wrapper.show_position_marker(human_model.human_positions[-1], label="human end", ident=3)
+        #marker_wrapper.show_position_marker(human_model.human_positions[-1], label="human end", ident=3)
         
         #package up the human trajectory into a message
         #trajmsg = self._to_trajectory_message(human_model.human_positions)
@@ -451,44 +474,65 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         self.menu_handler.apply( self.server, int_marker.name )
 
 class SimplePointSimulator():
-    def __init__(self, robot_positions, human_positions, jaco_interface):
+    def __init__(self, robot_positions, human_positions, jaco_interface=None, repeat=True):
         self.Timer = None
-        
+        self.repeat = repeat
+
         self.simulated_dt = 0.2 #TODO set these better
         self.playback_dt = 0.02
 
         self.counter = 0
 
         self.jaco_interface = jaco_interface
-        self.human_positions = self.process_human_positions(human_positions)
-        self.robot_positions = self.process_robot_positions(robot_positions)
-        rospy.loginfo("human_positions {}".format(self.human_positions))
-        rospy.loginfo("robot_positions {}".format(self.robot_positions))
-        rospy.loginfo("human shape {}".format(np.shape(self.human_positions)))
-        rospy.loginfo("robot shape {}".format(np.shape(self.robot_positions)))
+        human_positions = self.process_positionlist(human_positions[0:-1])
+        self.human_positions = human_positions
+        
+        if jaco_interface:
+            robot_positions = self.process_trajmsg(robot_positions)
+        else:
+            robot_positions = self.process_positionlist(robot_positions)
+        
+        self.robot_positions = robot_positions
+        #rospy.loginfo("human_positions {}".format(self.human_positions))
+        #rospy.loginfo("robot_positions {}".format(self.robot_positions))
+        #rospy.loginfo("human shape {}".format(np.shape(self.human_positions)))
+        #rospy.loginfo("robot shape {}".format(np.shape(self.robot_positions)))
         assert len(self.human_positions)==len(self.robot_positions)
         
     def simulate(self):
+        """Start a simulator to simulate the playback"""
         if not self.Timer:
             self.Timer = rospy.Timer(rospy.Duration(self.playback_dt), self._advance_models_callback)
   
     def _advance_models_callback(self,msg):
-
-
+        """Callback for simulation"""
         if self.counter < len(self.human_positions):
             human_pos = self.human_positions[self.counter]
             robot_pos = self.robot_positions[self.counter]
-            if self.counter == 0:
-                rospy.loginfo("human positions: {} for counter = {}".format(human_pos, self.counter))
-                rospy.loginfo("robot positions: {} for counter = {}".format(robot_pos, self.counter))
-            
-            marker_wrapper.show_position_marker(human_pos, label="human", ident = 4)
-            marker_wrapper.show_position_marker(robot_pos, "robot", ident = 5)
+            #if self.counter == 0:
+            #    rospy.loginfo("human position: {} for counter = {}".format(human_pos, self.counter))
+            #    rospy.loginfo("robot position: {} for counter = {}".format(robot_pos, self.counter))
+            #    rospy.loginfo("all human positions: {}".format(self.human_positions[0:5,:]))
+            #    rospy.loginfo("all human positions: {}".format(self.human_positions[0:5,:]))
+
+            marker_wrapper.show_position_marker(human_pos, label="human\n\n", ident = 4)
+            marker_wrapper.show_position_marker(robot_pos, label="robot\n\n", ident = 5)
+            #if self.counter ==0:
+            #    rospy.loginfo("all human positions after marker call: {}".format(self.human_positions[0:5,:]))
             self.counter +=1
+
         else:
             self.counter = 0
+            if not self.repeat:
+                self.Timer.shutdown
+                self.Timer = None
 
-    def process_robot_positions(self, robot_positions):
+    def process_trajmsg(self, robot_positions):
+        """ Processes robot positions into (num_sim_points,3) numpy array
+                @Param: robot_positions a trajectory_msgs/JointTrajectoryPoint[] points array
+                @Return: an interpolated () numpy array representing locations for simulation
+        """
+        rospy.loginfo("processing robot_positions****")
         processed_positions = []
         for point in robot_positions:
             joints = point.positions
@@ -499,10 +543,13 @@ class SimplePointSimulator():
         
         return self.interpolate_positions(np.asarray(processed_positions))
 
-    def process_human_positions(self, human_positions):
-        rospy.loginfo("human_positions {}".format(human_positions))
+    def process_positionlist(self, human_positions):
+        """ Processes human_positions into a (N,3) numpy array
+            @Param: human_positions a list of 
+        """
+        rospy.loginfo("processing human_positions {}".format(human_positions))
         human_pos = np.asarray(human_positions)
-        return self.interpolate_positions(human_pos[0:-1,:])
+        return self.interpolate_positions(human_pos)
     
     def interpolate_positions(self, sim_pos):
         """ Interpolates simulated_positions and sets self.playback_positions (3,num_playback_wpts)
