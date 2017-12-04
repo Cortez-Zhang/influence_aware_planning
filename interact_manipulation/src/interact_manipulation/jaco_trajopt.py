@@ -58,7 +58,7 @@ class JacoTrajopt:
                             'j2s7s300_joint_7']
 
         self.trajopt_num_waypoints = 30
-        self.dt = .2 #time between waypoints to be added in post processing
+        self.dt = 0.2 #time between waypoints to be added in post processing
         self.cost_functions = []
 
     def load_body_from_urdf(self, path_to_urdf, transform=np.eye(4, 4)):

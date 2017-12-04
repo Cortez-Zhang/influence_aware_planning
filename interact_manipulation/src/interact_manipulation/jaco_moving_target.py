@@ -62,8 +62,8 @@ class HumanModel():
         @param simulation method: The method in which to simulate the human e.g. constant velocity
         @param dt: the fixed time between waypoints (default 0.2)
     """
-    def __init__(self, start_state, goal_pos, simulation_method, dt=.2, params = {'goal_attraction': .01, 
-                                                                        'robot_repulsion': 0.003,
+    def __init__(self, start_state, goal_pos, simulation_method, dt=.2, params = {'mass': .006, 
+                                                                        'robot_aggressiveness': 0.1,
                                                                         'drag': 0,
                                                                         'force_cap': 0.02}):
         self.start_state = copy.deepcopy(start_state)
@@ -76,7 +76,7 @@ class HumanModel():
         self.current_state = copy.deepcopy(start_state)
         self.human_positions.append(start_state.position)
         #self.care_about_distance = .2
-        #marker_wrapper.show_position_marker(label="human \n start", position = start_state.position)
+        marker_wrapper.show_position_marker(label="human \n start", position = start_state.position)
 
     def reset_model(self):
         """ Reset the model to prepare for another forward simulation
@@ -117,13 +117,11 @@ class HumanModel():
         curr_pos = self.current_state.position
         curr_vel = self.current_state.velocity
 
-        F_repulse = -1*self.params["robot_repulsion"]*self.potential_field(eef_position,curr_pos)
-        #*direction_from_robot*self.obstacle_penalty_cost(dist_from_robot)
-        F_attract = self.params["goal_attraction"]*self.potential_field(self.goal_pos,curr_pos)
-        #*direction_to_goal*self.obstacle_penalty_cost(dist_to_goal)
-        F_drag = -1*self.params["drag"]*curr_vel
-        print(F_drag)
-        acc = F_attract+F_drag+F_repulse
+        F_repulse = -1*self.params["robot_aggressiveness"]*self.potential_field(eef_position,curr_pos)
+        F_attract = (1-self.params["robot_aggressiveness"])*self.potential_field(self.goal_pos,curr_pos)
+        #F_drag = -1*self.params["drag"]*curr_vel
+        #print(F_drag)
+        acc = (F_attract+F_repulse)*self.params["mass"]
 
         next_vel = curr_vel+acc*self.dt
         next_pos = 0.5*acc*self.dt**2+curr_vel*self.dt+curr_pos
@@ -134,7 +132,7 @@ class HumanModel():
         self.human_positions.append(next_pos)
 
     def potential_field(self, obstacle, curr_pos):
-        """ Calculate distance penalty for obstacles as in CHOMP paper
+        """ Calculate distance penalty for obstacles
             @Param obstacle: a (3,) numpy array with position of obstacle or goal
             @Param curr_pos: a (3,) numpy array with position of human
         """ 
@@ -160,7 +158,7 @@ class WaypointCostFunction(CostFunction):
     def __init__(self, robot, human_model,eef_link_name='j2s7s300_end_effector'):
         CostFunction.__init__(self, params={'hit_human_penalty': 0.5,
                                             'normalize_sigma': 1.0,
-                                            'care_about_distance': 0.2})
+                                            'care_about_distance': 0.1})
         self.robot = robot
         self.human_model = human_model
         self.eef_link_name = eef_link_name
@@ -283,24 +281,27 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         self.server.applyChanges()
 
     def _plan_and_execute(self, feedback):
+        self.jaco_interface.home()
+
+        #get the location of the robot and use that as the start pose
+        start_pose = self.jaco_interface.arm_group.get_current_pose()
 
         #create the goal_pose request
         goal_pose = PoseStamped()
         goal_pose.header = feedback.header
-        goal_pose.pose = feedback.pose
+        goal_pose.pose.position = Point(-0.5  ,  0.216,  0.538)
+        goal_pose.pose.orientation = start_pose.pose.orientation
         
         #create the human model
-        human_goal_position = np.array([0,0.216,0.538])
-        human_start_state = HumanState(np.array([-0.5,0.216,0.538]), np.array([.05,0,0]))
-        human_model = HumanModel(human_start_state, human_goal_position, simulation_method="constant_velocity")
+        human_goal_position = np.array([-.4,0.3,0.538])
+        human_start_state = HumanState(np.array([-.4,0.1,0.538]), np.array([0,0,0]))
+        human_model = HumanModel(human_start_state, human_goal_position, simulation_method="point_mass")
 
         #create the robot cost function, including human model
         cost_func = WaypointCostFunction(self.jaco_interface.planner.jaco, human_model)
         self.jaco_interface.planner.cost_functions = [cost_func]
         self.jaco_interface.planner.trajopt_num_waypoints = 20
         
-        #get the location of the robot and use that as the start pose
-        start_pose = self.jaco_interface.arm_group.get_current_pose()
         rospy.loginfo("Requesting plan from start_pose:\n {} \n goal_pose:\n {}".format(start_pose, goal_pose))
 
         #call trajopt
@@ -315,7 +316,10 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         #print(trajmsg)
         #send the human trajectory to an interactive marker for visualization
         self.start_human_pub.publish(trajmsg)
+        time_before = rospy.get_time()
+        #rospy.loginfo("time before execute {}".format(rospy.get_time()))
         self.jaco_interface.execute(traj)
+        rospy.loginfo("time to execute {}".format(rospy.get_time()-time_before))
 
     def _to_trajectory_message(self, positions):
         float_array = Float32MultiArray()

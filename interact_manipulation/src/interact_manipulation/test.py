@@ -25,14 +25,14 @@ plt.plot(eef_poses[:,0].T, eef_poses[:,1].T, 'gx')
 
 
 plt.figure(2)
-plt.plot(human_poses[:,0].T, 'rx')
+plt.plot(human_poses[:,1].T, 'rx')
 
 plt.figure(1)
 # ############################# heat map plotting code
 eef_position = eef_positions[0]
 def sum_of_forces(curr_pos):
-    robot_repulsion = human_model.params["robot_repulsion"]
-    goal_attraction = human_model.params["goal_attraction"]
+    robot_repulsion = -1*human_model.params["robot_aggressiveness"]
+    goal_attraction = (1-human_model.params["robot_aggressiveness"])
     F_repulse = robot_repulsion*human_model.potential_field(eef_position,curr_pos)
     #*direction_from_robot*self.obstacle_penalty_cost(dist_from_robot)
     F_attract = goal_attraction*human_model.potential_field(human_model.goal_pos,curr_pos)
@@ -42,8 +42,8 @@ def sum_of_forces(curr_pos):
 plt.plot(eef_position[0],eef_position[1], 'ro')
 
 num = 100
-x = np.linspace(-1,1,num)
-y = np.linspace(-1,1,num)
+x = np.linspace(-1,.5,num)
+y = np.linspace(-.5,1,num)
 #z = np.linspace(0.2,5,num)
 
 XHuman, YHuman = np.meshgrid(x,y)
