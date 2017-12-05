@@ -121,6 +121,7 @@ class HumanModel():
 
         F_repulse = -1*self.params["robot_aggressiveness"]*self.potential_field(eef_position,curr_pos)
         F_attract = (1-self.params["robot_aggressiveness"])*self.potential_field(self.goal_pos,curr_pos)
+        
         #F_drag = -1*self.params["drag"]*curr_vel
         #print(F_drag)
         acc = (F_attract+F_repulse)*self.params["mass"]
@@ -194,10 +195,26 @@ class WaypointCostFunction(CostFunction):
         #initialize distances to nans, if I accidentally don't fill one I'll get an error
         #distances = np.empty((len(human_positions),))
         #distances[:] = np.nan
-        
-        #self.human_closeness_cost(human_positions, eef_positions)
 
-        return self.human_speed_cost(human_velocities)
+        #self.human_closeness_cost(human_positions, eef_positions) #TODO add param to specify cost
+        #self.human_speed_cost(human_velocities) #TODO add param to specify cost
+        return self.human_go_first_cost(human_positions)
+    
+    def human_go_first_cost(self, human_positions):
+        """Calculate the distance above midpoint for human going first
+            @Param human_positions: list of (3,) numpy arrays
+        """
+        cost = 0.0
+        #get midpoint between start and goal
+        midpoint = (self.human_model.goal_pos+self.human_model.start_state.position)/2.0
+        to_mid_vector = midpoint-self.human_model.start_state.position
+        direction = to_mid_vector/np.linalg.norm(to_mid_vector)
+
+        for position in human_positions:
+            #get distance above midpoint
+            distance = np.linalg.norm(np.dot(direction, position-midpoint))
+            cost+=np.tanh(distance)/20 #TODO set this better, divide by num waypoints
+        return cost
     
     def human_speed_cost(self, human_velocities):
         cost = 0.0
@@ -289,8 +306,6 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         self.reset_human_pub = rospy.Publisher("reset_human",Empty, queue_size=10)
         self.human_start_pose = Pose(Point(-0.5,0.216,0.538),Quaternion(0,0,0,1))
 
-        #np.save('human_position {}'.format(datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')) 
-        #np.save
     def _onclick_callback(self, feedback):
         if feedback.event_type == InteractiveMarkerFeedback.MENU_SELECT:
             if feedback.menu_entry_id == 1:
