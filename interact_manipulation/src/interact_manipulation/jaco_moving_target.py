@@ -76,14 +76,13 @@ class HumanModel():
         self.human_positions = []
         self.current_state = copy.deepcopy(start_state)
         self.human_positions.append(start_state.position)
-        #self.care_about_distance = .2
+
         marker_wrapper.show_position_marker(label="human \n start\n\n", position = start_state.position, ident=1, color=(1,0,0))
         marker_wrapper.show_position_marker(label="human \n goal\n\n", position= goal_pos, ident=2, color=(0,1,0))
+    
     def reset_model(self):
         """ Reset the model to prepare for another forward simulation
         """
-        #marker_wrapper.show_position_marker(label="human \n endstate", position = self.current_state.position)
-
         self.human_positions = []
         self.human_velocities = []
         self.current_state = copy.deepcopy(self.start_state)
@@ -93,13 +92,9 @@ class HumanModel():
         """ Return the predicted positions of the human
             @Param eef_positions: a list of (3,) numpy arrays 
         """
-        #rospy.loginfo("eef_positions {}".format(eef_positions))
-        
         advance_model = getattr(self, self.simulation_method)
         for eef_position in eef_positions:
-            #rospy.loginfo("eef_position {}".format(eef_position))
             advance_model(eef_position)
-        #rospy.loginfo("human_positions {}".format(self.human_positions))
         return self.human_positions
     
     def constant_velocity(self, eef_position):
@@ -122,8 +117,6 @@ class HumanModel():
         F_repulse = -1*self.params["robot_aggressiveness"]*self.potential_field(eef_position,curr_pos)
         F_attract = (1-self.params["robot_aggressiveness"])*self.potential_field(self.goal_pos,curr_pos)
         
-        #F_drag = -1*self.params["drag"]*curr_vel
-        #print(F_drag)
         acc = (F_attract+F_repulse)*self.params["mass"]
 
         next_vel = curr_vel+acc*self.dt
@@ -150,10 +143,6 @@ class HumanModel():
         direction = dist/dist_norm
         if dist_norm < epsilon:
             dist_norm = epsilon
-         
-        #if dist_norm <.001:
-        #    direction = np.zeros()
-        #else:
         
         return direction/dist_norm
         #return force
@@ -206,14 +195,18 @@ class WaypointCostFunction(CostFunction):
         """
         cost = 0.0
         #get midpoint between start and goal
-        midpoint = (self.human_model.goal_pos+self.human_model.start_state.position)/2.0
-        to_mid_vector = midpoint-self.human_model.start_state.position
-        direction = to_mid_vector/np.linalg.norm(to_mid_vector)
+        start_pos = self.human_model.start_state.position
+        goal_pos = self.human_model.goal_pos
+
+        midpoint = (start_pos+goal_pos)/2.0
+        to_mid = midpoint-start_pos
+        norm_to_mid = np.linalg.norm(to_mid)
 
         for position in human_positions:
-            #get distance above midpoint
-            distance = np.linalg.norm(np.dot(direction, position-midpoint))
-            cost+=np.tanh(distance)/20 #TODO set this better, divide by num waypoints
+            #TODO vectorize this better
+                """ Calculate individual waypoint cost """
+            distance=np.dot(to_mid,midpoint-position)/norm_to_mid
+            cost = np.tanh(distance)    
         return cost
     
     def human_speed_cost(self, human_velocities):
@@ -524,16 +517,9 @@ class SimplePointSimulator():
         if self.counter < len(self.human_positions):
             human_pos = self.human_positions[self.counter]
             robot_pos = self.robot_positions[self.counter]
-            #if self.counter == 0:
-            #    rospy.loginfo("human position: {} for counter = {}".format(human_pos, self.counter))
-            #    rospy.loginfo("robot position: {} for counter = {}".format(robot_pos, self.counter))
-            #    rospy.loginfo("all human positions: {}".format(self.human_positions[0:5,:]))
-            #    rospy.loginfo("all human positions: {}".format(self.human_positions[0:5,:]))
 
             marker_wrapper.show_position_marker(human_pos, label="human\n\n", ident = 4)
             marker_wrapper.show_position_marker(robot_pos, label="robot\n\n", ident = 5)
-            #if self.counter ==0:
-            #    rospy.loginfo("all human positions after marker call: {}".format(self.human_positions[0:5,:]))
             self.counter +=1
 
         else:
