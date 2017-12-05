@@ -50,17 +50,11 @@ for i in range(20):
     fig.canvas.draw()
 
     ####belief update code#############
-
-
-    m, c = get_stats(i / 10.0)  #TODO test pause capability
-                        #TODO plot the positions one at a time along with the belief updates 
+    m, c = get_stats(i / 10.0)
 
     # update the animated artists
     g1.set_height(m)
     g2.set_height(c)
-
-    #fig1 = plt.figure(1)
-    #plt.scatter(eef_positions[i][0],eef_positions[i][1], 'ro')
 
     # ask the canvas to re-draw itself the next time it
     # has a chance.
