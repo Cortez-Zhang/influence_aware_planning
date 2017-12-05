@@ -203,8 +203,8 @@ class WaypointCostFunction(CostFunction):
         norm_to_mid = np.linalg.norm(to_mid)
 
         for position in human_positions:
-            #TODO vectorize this better
-                """ Calculate individual waypoint cost """
+            #TODO vectorize this better 
+            """" Calculate individual waypoint cost """
             distance=np.dot(to_mid,midpoint-position)/norm_to_mid
             cost = np.tanh(distance)    
         return cost
