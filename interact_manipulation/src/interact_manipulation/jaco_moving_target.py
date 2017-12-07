@@ -70,7 +70,7 @@ class HumanModel():
                                                                         'robot_aggressiveness': .3,
                                                                         'drag': 0,
                                                                         'force_cap': 0.02,
-                                                                        'max_certainty_speed': 0.5}):
+                                                                        'max_certainty_speed': 0.2}):
         self.start_state = copy.deepcopy(start_state)
         self.goals = goals
         self.simulation_method = simulation_method
@@ -166,7 +166,7 @@ class HumanModel():
             #TODO there can only be two goals expand so it can be more
             speed = self.params["max_certainty_speed"]*(min(b)*2)
             human_goal = b.index(min(b))
-            goal_dir = GoalInference.direction(curr_pos,self.goals[human_goal])
+            goal_dir = GoalInference.direction(curr_pos,self.goals[human_goal]) #humans goal direction
             
             next_vel = speed*goal_dir
             next_pos = next_vel*self.dt+curr_pos
@@ -283,7 +283,8 @@ class GoalInference(object):
         norm_belief = GoalInference.normalize(beliefs)
         #print("normalized beliefs {}".format(norm_belief))
         self.beliefs_over_time.append(norm_belief)
-        return norm_belief
+        self.current_beliefs = norm_belief.tolist()
+#        return norm_belief
 
 
 class WaypointCostFunction(CostFunction):
@@ -356,7 +357,7 @@ class WaypointCostFunction(CostFunction):
             speed = np.linalg.norm(vel)
             #rospy.loginfo(speed)
             cost+=speed
-        return cost*20
+        return cost
            
     def human_closeness_cost(self,human_positions,eef_positions):
         cost = 0.0
@@ -464,16 +465,16 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         #create the goal_pose request for the robot
         goal_pose = PoseStamped()
         goal_pose.header = feedback.header
-        goal_pose.pose.position = Point(-0.3,0,0.538)
+        goal_pose.pose.position = Point(-0.2,-0.2,0.538)
         goal_pose.pose.orientation = start_pose.pose.orientation
         
-        goal1 = np.array([-0.4,0.1,0.538])
-        goal2 = np.array([-0.3,0,0.538])
+        goal1 = np.array([-0.6,0.1,0.538])
+        goal2 = np.array([-0.2,-0.2,0.538])
         goals = [goal1, goal2]
-        goal_inference = GoalInference(goals)
+        goal_inference = GoalInference(goals, variance = 2)
 
         #create the human model
-        human_start_state = HumanState(np.array([-.5,0.3,0.538]), np.array([0,0,0]))
+        human_start_state = HumanState(np.array([-.3,0.3,0.538]), np.array([0,0,0]))
         human_model = HumanModel(human_start_state, goals, simulation_method="speed_based_certainty", goal_inference=goal_inference)
         
         #create the robot cost function, including human model
