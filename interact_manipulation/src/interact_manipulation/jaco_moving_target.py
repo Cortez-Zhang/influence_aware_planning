@@ -468,7 +468,7 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         goal_pose.pose.position = Point(-0.2,-0.2,0.538)
         goal_pose.pose.orientation = start_pose.pose.orientation
         
-        goal1 = np.array([-0.6,0.1,0.538])
+        goal1 = np.array([-0.4,-0.1,0.538])
         goal2 = np.array([-0.2,-0.2,0.538])
         goals = [goal1, goal2]
         goal_inference = GoalInference(goals, variance = 2)
