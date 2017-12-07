@@ -58,46 +58,61 @@ class HumanState():
 
 class HumanModel():
     """ Simulates a human for use in path planning (trajopt)
-        @Param start_state: starting HumanState object
-        @Param goal_pos: The known goal_position of the human (3,1) numpy array
-        @param simulation method: The method in which to simulate the human e.g. constant velocity
-        @param dt: the fixed time between waypoints (default 0.2)
+        Params
+        ---
+        start_state: starting HumanState object
+        goals: A list of (3,) numpy arrays, known goal_positions of the human
+        simulation method: The method in which to simulate the human 
+        e.g. constant velocity, point_mass, certainty_based_speed
+        dt: the fixed time between waypoints (default 0.2)
     """
-    def __init__(self, start_state, goal_pos, simulation_method, dt=.2, params = {'mass': .006, 
+    def __init__(self, start_state, goals, simulation_method, goal_inference=None, dt=.2, params = {'mass': .006, 
                                                                         'robot_aggressiveness': .3,
                                                                         'drag': 0,
-                                                                        'force_cap': 0.02}):
+                                                                        'force_cap': 0.02,
+                                                                        'max_certainty_speed': 0.5}):
         self.start_state = copy.deepcopy(start_state)
-        self.goal_pos = goal_pos
+        self.goals = goals
         self.simulation_method = simulation_method
         self.dt = dt
         self.params = params
+        self.goal_inference = goal_inference #GoalInference instance, set to none unless simulation_method == certainty_based_speed
         
         self.human_positions = []
         self.current_state = copy.deepcopy(start_state)
         self.human_positions.append(start_state.position)
 
         marker_wrapper.show_position_marker(label="human \n start\n\n", position = start_state.position, ident=1, color=(1,0,0))
-        marker_wrapper.show_position_marker(label="human \n goal\n\n", position= goal_pos, ident=2, color=(0,1,0))
+        for i, goal in enumerate(goals):
+           marker_wrapper.show_position_marker(label="human \n goal\n\n", position= goal, ident=10+i, color=(0,1,0))
     
     def reset_model(self):
         """ Reset the model to prepare for another forward simulation
         """
+        if self.goal_inference:
+            self.goal_inference.reset()
         self.human_positions = []
         self.human_velocities = []
         self.current_state = copy.deepcopy(self.start_state)
         self.human_positions.append(self.start_state.position)
 
     def get_human_positions(self, eef_positions):
-        """ Return the predicted positions of the human
-            @Param eef_positions: a list of (3,) numpy arrays 
+        """ Get the predicted positions of the human for a given set of robot positions
+            i.e. how will the human react to the robot?
+            Param
+            ---
+            eef_positions: a list of (3,) numpy arrays containing the positions of the end effector
         """
         advance_model = getattr(self, self.simulation_method)
-        for eef_position in eef_positions:
-            advance_model(eef_position)
-        return self.human_positions
-    
-    def constant_velocity(self, eef_position):
+        
+        prev_eef_pos = eef_positions[0]
+        for eef_pos in eef_positions:
+            advance_model(eef_pos, prev_eef_pos)
+            prev_eef_pos = eef_pos.copy()
+
+        return self.human_positions    
+            
+    def constant_velocity(self, eef_position, prev_eef_pos):
         """ Evolve the human state forward using a constant velocity assumption
         """
         #rospy.loginfo("current_state {}".format(self.current_state))
@@ -107,7 +122,7 @@ class HumanModel():
 
         self.human_positions.append(next_pos)
         
-    def point_mass(self, eef_position):
+    def point_mass(self, eef_position, prev_eef_pos):
         """ Evolve the human state forward using a point mass model
             We assume the human will move away from the robot and towards its goal
         """
@@ -115,7 +130,10 @@ class HumanModel():
         curr_vel = self.current_state.velocity
 
         F_repulse = -1*self.params["robot_aggressiveness"]*self.potential_field(eef_position,curr_pos)
-        F_attract = (1-self.params["robot_aggressiveness"])*self.potential_field(self.goal_pos,curr_pos)
+        
+        F_attract = 0.0
+        for goal in goals:
+            F_attract+= (1-self.params["robot_aggressiveness"])*self.potential_field(self.goal,curr_pos)
         
         acc = (F_attract+F_repulse)*self.params["mass"]
 
@@ -127,11 +145,48 @@ class HumanModel():
 
         self.human_velocities.append(next_vel)
         self.human_positions.append(next_pos)
+    
+    def speed_based_certainty(self, eef_position, prev_eef_pos):
+        """ Human moves at a speed proportional to belief over robot goals
+            The human will move to the goal the robot is not going towards
+            the human moves faster if it is more certain that is the goal
+            Param
+            ---
+            eef_position: a (3,) numpy array with xyz position of robot end effector
+        """
+        #TODO what happens if I am at the goal?
+        curr_pos = self.current_state.position
+        dist_goal1 = np.linalg.norm(curr_pos - self.goals[0])
+        dist_goal2 = np.linalg.norm(curr_pos - self.goals[1])
+        #rospy.loginfo("dist_goal1 {}, dist_goal2 {}".format(dist_goal1, dist_goal2))
+        if dist_goal1>0.05 and dist_goal2>0.05:
+            self.goal_inference.update(eef_position,prev_eef_pos)
+            b = self.goal_inference.current_beliefs
+
+            #TODO there can only be two goals expand so it can be more
+            speed = self.params["max_certainty_speed"]*(min(b)*2)
+            human_goal = b.index(min(b))
+            goal_dir = GoalInference.direction(curr_pos,self.goals[human_goal])
+            
+            next_vel = speed*goal_dir
+            next_pos = next_vel*self.dt+curr_pos
+            
+            self.current_state.position = next_pos
+            self.current_state.velocity = next_vel
+            
+        else:
+            next_pos = self.current_state.position
+            next_vel = self.current_state.velocity
+            #self.human_velocities
+        self.human_velocities.append(next_vel.copy())
+        self.human_positions.append(next_pos.copy())
 
     def potential_field(self, obstacle, curr_pos):
         """ Calculate distance penalty for obstacles
-            @Param obstacle: a (3,) numpy array with position of obstacle or goal
-            @Param curr_pos: a (3,) numpy array with position of human
+            Params
+            ---
+            obstacle: a (3,) numpy array with position of obstacle or goal
+            curr_pos: a (3,) numpy array with position of human
         """ 
         #TODO vectorize this using vectorized comparisons
         epsilon = self.params["force_cap"]
@@ -145,7 +200,91 @@ class HumanModel():
             dist_norm = epsilon
         
         return direction/dist_norm
-        #return force
+
+class GoalInference(object):
+    """ Creates a model which can store and update belief over goals
+        Params
+        ---
+        goals: A list of (3,) numpy arrays
+        variance: A float representing the variance of the gaussian default 0.01
+        current_beliefs: A list of float priors on goals, default [0.5, 0.5]
+        beliefs_over_time: A list of belief lists one for each time
+    """
+    def __init__(self, goals, variance = 0.01, current_beliefs = [0.5,0.5]):
+        self.beliefs_over_time = [] #a list of lists, each belief in time
+        self.goals = goals
+        self.variance = variance
+        self.current_beliefs = current_beliefs #a list of scaler beliefs for each goal
+
+    def reset(self):
+        """ Reset the goal inference back to nothing
+        """
+        self.current_beliefs = [.5,.5]
+        self.beliefs_over_time = []
+
+    def gaussian(self, mu):
+        """ Compute an N dim independent multivariate gaussian (Covariance terms are 0)
+            Params
+            ----
+            mu: a vector of means
+            Returns
+            ----
+            gaussian: A function which computes the probability density of a 3D point
+        """
+        cov = self.variance * np.eye(mu.shape[0])
+        return lambda x: (1./np.sqrt(2*math.pi*np.linalg.det(cov))) * np.exp(
+                -(1./2.) * np.dot(np.dot((x - mu), np.linalg.inv(cov)), (x - mu))
+                )
+    @staticmethod
+    def direction(x, y):
+        """ Compute the direction from x to y
+            Params
+            ---
+            x: a numpy array
+            y: a numpy array
+            Returns
+            ---
+            normalized direction: numpy array of unit length to y from x
+        """
+        return (y - x)/np.linalg.norm(y - x + 1e-12)
+    
+    @staticmethod
+    def normalize(beliefs):
+        """ Normalize a descrete set of beliefs
+            Params
+            ---
+            beliefs: a list of scaler beliefs #TODO check this
+            Returns
+            ---
+            norm_beliefs: a np array of normalized beliefs
+        """
+        return np.asarray(beliefs)/np.sum(np.asarray(beliefs))
+
+    def update(self, eef_pos, prev_eef_pos):
+        """ Updates the belief over goals
+            Params
+            ---
+            prev_eef_pos: a (3,) numpy array with xyz of robot end effector
+            eef_pos: current location of end effector
+            Returns
+            ---
+            norm_beliefs: a list of new beliefs given the observation (eef_pos)
+        """
+        #print("prev_eef_pos {} curr_eef_pos {}".format(prev_eef_pos,eef_pos))
+        goal_dirs = [GoalInference.direction(eef_pos,goal) for goal in self.goals]
+        #print("direction to goals: {}".format(goal_dirs))
+        #rospy.loginfo("goal_dirs {}".format(goal_dirs))
+        interaction_dir = GoalInference.direction(prev_eef_pos,eef_pos)
+        #print("interaction_dir: {}".format(interaction_dir))
+        #rospy.loginfo("prev_eef_pos {}, eef_pos {}".format(prev_eef_pos, eef_pos))
+        #rospy.loginfo("interaction_dir {}")
+        beliefs = np.array([b*self.gaussian(goal_dir)(interaction_dir) for (b, goal_dir) in zip(self.current_beliefs, goal_dirs)])
+        #print("beliefs {}".format(beliefs))
+        norm_belief = GoalInference.normalize(beliefs)
+        #print("normalized beliefs {}".format(norm_belief))
+        self.beliefs_over_time.append(norm_belief)
+        return norm_belief
+
 
 class WaypointCostFunction(CostFunction):
     def __init__(self, robot, human_model,eef_link_name='j2s7s300_end_effector'):
@@ -180,23 +319,25 @@ class WaypointCostFunction(CostFunction):
         human_positions = self.human_model.get_human_positions(eef_positions)
         human_velocities = self.human_model.human_velocities
 
-        #rospy.loginfo("eef positons: {}".format(human_positions))
-        #initialize distances to nans, if I accidentally don't fill one I'll get an error
-        #distances = np.empty((len(human_positions),))
-        #distances[:] = np.nan
-
         #self.human_closeness_cost(human_positions, eef_positions) #TODO add param to specify cost
         #self.human_speed_cost(human_velocities) #TODO add param to specify cost
-        return self.human_go_first_cost(human_positions)
+        #self.human_go_first_cost(human_positions)
+        return self.human_speed_cost(human_velocities)
     
     def human_go_first_cost(self, human_positions):
         """Calculate the distance above midpoint for human going first
-            @Param human_positions: list of (3,) numpy arrays
+            This cost can only be used with a single goal. Its meant to be something like an intersection
+            The human and robot cross paths and the robot wants the human to go first.
+            Params
+            ---
+            human_positions: list of (3,) numpy arrays
         """
+        assert len(self.human_model.goals)==1 
+        
         cost = 0.0
         #get midpoint between start and goal
         start_pos = self.human_model.start_state.position
-        goal_pos = self.human_model.goal_pos
+        goal_pos = self.human_model.goals[0]
 
         midpoint = (start_pos+goal_pos)/2.0
         to_mid = midpoint-start_pos
@@ -215,7 +356,7 @@ class WaypointCostFunction(CostFunction):
             speed = np.linalg.norm(vel)
             #rospy.loginfo(speed)
             cost+=speed
-        return cost
+        return cost*20
            
     def human_closeness_cost(self,human_positions,eef_positions):
         cost = 0.0
@@ -312,22 +453,29 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         self.server.applyChanges()
 
     def _plan_and_execute(self, feedback):
+        """ Callback to interactive marker
+            This is where the main stuff happens. 
+        """
         self.jaco_interface.home()
 
         #get the location of the robot and use that as the start pose
         start_pose = self.jaco_interface.arm_group.get_current_pose()
 
-        #create the goal_pose request
+        #create the goal_pose request for the robot
         goal_pose = PoseStamped()
         goal_pose.header = feedback.header
-        goal_pose.pose.position = Point(-0.5  ,  0.216,  0.538)
+        goal_pose.pose.position = Point(-0.3,0,0.538)
         goal_pose.pose.orientation = start_pose.pose.orientation
         
-        #create the human model
-        human_goal_position = np.array([-.4,0.3,0.538])
-        human_start_state = HumanState(np.array([-.4,0.1,0.538]), np.array([0,0,0]))
-        human_model = HumanModel(human_start_state, human_goal_position, simulation_method="point_mass")
+        goal1 = np.array([-0.4,0.1,0.538])
+        goal2 = np.array([-0.3,0,0.538])
+        goals = [goal1, goal2]
+        goal_inference = GoalInference(goals)
 
+        #create the human model
+        human_start_state = HumanState(np.array([-.5,0.3,0.538]), np.array([0,0,0]))
+        human_model = HumanModel(human_start_state, goals, simulation_method="speed_based_certainty", goal_inference=goal_inference)
+        
         #create the robot cost function, including human model
         cost_func = WaypointCostFunction(self.jaco_interface.planner.jaco, human_model)
         self.jaco_interface.planner.cost_functions = [cost_func]
@@ -338,7 +486,7 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         #call trajopt
         traj = self.jaco_interface.plan(start_pose, goal_pose)
 
-        #marker_wrapper.show_position_marker(human_model.human_positions[-1], label="human end", ident=3)
+        marker_wrapper.show_position_marker(human_model.human_positions[-1], label="human end", ident=3)
         
         #package up the human trajectory into a message
         #trajmsg = self._to_trajectory_message(human_model.human_positions)
@@ -356,6 +504,10 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         #rospy.loginfo("time to execute {}".format(rospy.get_time()-time_before))
 
     def _to_trajectory_message(self, positions):
+        """Convert the human positions to a message that behaves like a trajectory
+            to be passed to human.py
+            #TODO this function is now obsolete
+        """
         float_array = Float32MultiArray()
         
         layout = MultiArrayLayout()
@@ -482,6 +634,7 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
         self.menu_handler.apply( self.server, int_marker.name )
 
 class SimplePointSimulator():
+    """ A simple simulator to show markers for a human and robot """
     def __init__(self, robot_positions, human_positions, jaco_interface=None, repeat=True):
         self.Timer = None
         self.repeat = repeat
