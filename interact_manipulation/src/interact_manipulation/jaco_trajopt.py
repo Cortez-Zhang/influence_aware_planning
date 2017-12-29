@@ -230,10 +230,103 @@ class JacoTrajopt:
         result = trajoptpy.OptimizeProblem(prob)  # do optimization
         t_elapsed = time.time() - t_start
         print("Planning took {} seconds".format(t_elapsed))
-        print(result)
+        print(result.GetCosts())
         return self._to_trajectory_msg(result.GetTraj())
 
-    def _to_trajectory_msg(self, traj, max_joint_vel=0.5):
+    def plan_pose(self, start_config, goal_pose, orientation=True):
+        """
+        Plans from a start configuration to a goal pose (with or without taking orientation as a goal constraint)
+        
+        :param start_config: the start pose
+        :param goal_pose: the goal pose
+        :param orientation: if True, takes orientation as a constraint at the goal pose 
+        :return: 
+        """
+        print("Planning from config {} to pose {}...".format(start_config, goal_pose))
+
+        dofs = len(start_config)
+
+        start_config_or = list(start_config)
+        start_config_or[2] += math.pi  # TODO this seems to be a bug in OpenRAVE?
+
+        self.jaco.SetDOFValues(start_config_or + self.finger_joint_values)
+
+        if orientation:
+            rot_coeffs = [10, 10, 10]
+        else:
+            rot_coeffs = [0, 0, 0]
+
+        constraints = [{
+            "type": "pose",
+            "params": {"xyz": [goal_pose.position.x,
+                               goal_pose.position.y,
+                               goal_pose.position.z],
+                       "wxyz": [1,0,0,0],  # unused
+                       "link": "j2s7s300_end_effector",
+                       "rot_coeffs": rot_coeffs,
+                       "pos_coeffs": [10, 10, 10]
+                       }
+        }]
+
+        request = {
+            "basic_info":
+                {
+                    "n_steps": self.trajopt_num_waypoints,
+                    "manip": self.jaco.GetActiveManipulator().GetName(),
+                    "start_fixed": True
+                },
+            "costs":
+                [
+                    {
+                        "type": "joint_vel",  # joint-space velocity cost
+                        "params": {"coeffs": [1]} # a list of length one is automatically expanded to a list of length n_dofs
+                    },
+                    {
+                        "type": "collision",
+                        "params": {
+                            # "coeffs": [20],
+                        "coeffs": [100.0],
+                        # penalty coefficients. list of length one is automatically expanded to a list of length n_timesteps
+                            "dist_pen": [0.025],
+                        # robot-obstacle distance that penalty kicks in. expands to length n_timesteps
+                            "first_step": 0,
+                            "last_step": self.trajopt_num_waypoints - 1,
+                            "continuous": True
+                        },
+                    }
+                ],
+            "constraints": constraints,
+            "init_info": {
+                "type": "stationary"
+            }
+        }
+        s = json.dumps(request)  # convert dictionary into json-formatted string
+        prob = trajoptpy.ConstructProblem(s, self.env)  # create object that stores optimization problem
+
+        # Add the cost function
+        for i, cost_function in enumerate(self.cost_functions):
+            for t in range(1, self.trajopt_num_waypoints):
+                # prob.AddCost(cost_function.get_cost, [(t, j) for j in range(dofs)], cost_function.get_name())
+                if cost_function.diffmethod == CostFunction.METHOD_NUMERICAL:
+                    prob.AddErrorCost(cost_function.get_cost,
+                                      [(t, j) for j in xrange(dofs)],
+                                      cost_function.type,
+                                      "{}_{}".format(cost_function.get_name(), t))
+                elif cost_function.diffmethod == CostFunction.METHOD_ANALYTIC:
+                    prob.AddErrorCost(cost_function.get_cost,
+                                      cost_function.get_cost_jacobian,
+                                      [(t, j) for j in xrange(dofs)],
+                                      cost_function.type,
+                                      "{}_{}".format(cost_function.get_name(), t))
+
+        t_start = time.time()
+        result = trajoptpy.OptimizeProblem(prob)  # do optimization
+        t_elapsed = time.time() - t_start
+        print("Planning took {} seconds".format(t_elapsed))
+        print(result.GetCosts())
+        return self._to_trajectory_msg(result.GetTraj())
+
+    def _to_trajectory_msg(self, traj, max_joint_vel=0.1):
         """ Converts to a moveit_msgs/RobotTrajectory message """
         msg = RobotTrajectory()
         msg.joint_trajectory.joint_names = self.joint_names
@@ -248,6 +341,7 @@ class JacoTrajopt:
             msg.joint_trajectory.points.append(p)
 
         self._assign_constant_velocity_profile(msg, max_joint_vel)
+        print(msg.joint_trajectory)
 
         return msg
 
@@ -276,3 +370,16 @@ class JacoTrajopt:
 
             t += dt
             p.time_from_start = rospy.Duration(t)
+
+        # Assign accelerations
+        traj.joint_trajectory.points[0].velocities = num_dof * [0.0]
+        traj.joint_trajectory.points[-1].velocities = num_dof * [0.0]
+        for i in range(len(traj.joint_trajectory.points) - 1):
+            p = traj.joint_trajectory.points[i]
+            p_next = traj.joint_trajectory.points[i + 1]
+            dt = (p_next.time_from_start - p.time_from_start).to_sec()
+
+            p.accelerations = num_dof * [0.0]
+            for j in range(num_dof):
+                dv = p_next.velocities[j] - p.velocities[j]
+                p.accelerations[j] = dv / dt

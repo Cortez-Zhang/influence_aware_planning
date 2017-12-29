@@ -107,7 +107,6 @@ class JacoInterface:
 
         # Plan a trajectory with trajopt
         traj = self.planner.plan(start_config, goal_config)
-        print(traj)
 
         return traj
 
@@ -160,7 +159,51 @@ class JacoInterface:
 
         # Plan a trajectory with trajopt
         traj = self.planner.plan(start_config, goal_config)
-        # print(traj)
+
+        return traj
+
+    def plan_pose(self, start_config, goal_pose, orientation=True):
+        res = self.fk(start_config, links=['j2s7s300_end_effector'])
+        start_pose = res.pose_stamped[0]
+
+        # Visualize the start pose
+        start_marker = Marker()
+        start_marker.header.frame_id = start_pose.header.frame_id
+        start_marker.header.stamp = rospy.get_rostime()
+        start_marker.ns = 'planning_start'
+        start_marker.id = 0
+        start_marker.type = Marker.SPHERE
+        start_marker.pose = start_pose.pose
+        start_marker.scale.x = 0.1
+        start_marker.scale.y = 0.1
+        start_marker.scale.z = 0.1
+        start_marker.color.r = 1.0
+        start_marker.color.g = 0.0
+        start_marker.color.b = 0.0
+        start_marker.color.a = 0.75
+        start_marker.lifetime = rospy.Duration(0)
+        self.marker_pub.publish(start_marker)
+
+        # Visualize the goal pose
+        goal_marker = Marker()
+        goal_marker.header.frame_id = goal_pose.header.frame_id
+        goal_marker.header.stamp = rospy.get_rostime()
+        goal_marker.ns = 'planning_goal'
+        goal_marker.id = 0
+        goal_marker.type = Marker.SPHERE
+        goal_marker.pose = goal_pose.pose
+        goal_marker.scale.x = 0.1
+        goal_marker.scale.y = 0.1
+        goal_marker.scale.z = 0.1
+        goal_marker.color.r = 0.0
+        goal_marker.color.g = 1.0
+        goal_marker.color.b = 0.0
+        goal_marker.color.a = 0.75
+        goal_marker.lifetime = rospy.Duration(0)
+        self.marker_pub.publish(goal_marker)
+
+        # Plan a trajectory with trajopt
+        traj = self.planner.plan_pose(start_config, goal_pose.pose, orientation)
 
         return traj
 
