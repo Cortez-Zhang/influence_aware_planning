@@ -102,6 +102,7 @@ class JacoTrajopt:
                            [0.0, 0.0, 0.0, 1.0]])
         body.SetName(name)
         self.env.Add(body, True)
+        print("Added cube to env!")
 
     def get_body_markers(self):
         """ Returns a list of visualization_msgs/MarkerArray with all the links of each body in the environment """
@@ -233,13 +234,14 @@ class JacoTrajopt:
         print(result.GetCosts())
         return self._to_trajectory_msg(result.GetTraj())
 
-    def plan_pose(self, start_config, goal_pose, orientation=True):
+    def plan_pose(self, start_config, goal_pose, orientation=True, max_eef_displacement=0.15):
         """
         Plans from a start configuration to a goal pose (with or without taking orientation as a goal constraint)
         
         :param start_config: the start pose
         :param goal_pose: the goal pose
         :param orientation: if True, takes orientation as a constraint at the goal pose 
+        :param max_eef_displacement: 
         :return: 
         """
         print("Planning from config {} to pose {}...".format(start_config, goal_pose))
@@ -256,17 +258,26 @@ class JacoTrajopt:
         else:
             rot_coeffs = [0, 0, 0]
 
-        constraints = [{
-            "type": "pose",
-            "params": {"xyz": [goal_pose.position.x,
-                               goal_pose.position.y,
-                               goal_pose.position.z],
-                       "wxyz": [1,0,0,0],  # unused
-                       "link": "j2s7s300_end_effector",
-                       "rot_coeffs": rot_coeffs,
-                       "pos_coeffs": [10, 10, 10]
-                       }
-        }]
+        constraints = [
+            {
+                "type": "pose",
+                "params": {"xyz": [goal_pose.position.x,
+                                   goal_pose.position.y,
+                                   goal_pose.position.z],
+                           "wxyz": [1, 0, 0, 0],  # unused
+                           "link": "j2s7s300_end_effector",
+                           "rot_coeffs": rot_coeffs,
+                           "pos_coeffs": [10, 10, 10]}
+            },
+            {
+                "type": "cart_vel",
+                "name": "cart_vel",
+                "params": {"max_displacement": max_eef_displacement,
+                           "first_step": 0,
+                           "last_step": self.trajopt_num_waypoints - 1,
+                           "link": "j2s7s300_end_effector"
+                           }
+            }]
 
         request = {
             "basic_info":
@@ -341,7 +352,6 @@ class JacoTrajopt:
             msg.joint_trajectory.points.append(p)
 
         self._assign_constant_velocity_profile(msg, max_joint_vel)
-        print(msg.joint_trajectory)
 
         return msg
 

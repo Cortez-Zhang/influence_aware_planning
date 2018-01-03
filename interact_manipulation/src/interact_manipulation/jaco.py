@@ -162,7 +162,7 @@ class JacoInterface:
 
         return traj
 
-    def plan_pose(self, start_config, goal_pose, orientation=True):
+    def plan_pose(self, start_config, goal_pose, orientation=True, max_eef_displacement=0.15):
         res = self.fk(start_config, links=['j2s7s300_end_effector'])
         start_pose = res.pose_stamped[0]
 
@@ -203,7 +203,10 @@ class JacoInterface:
         self.marker_pub.publish(goal_marker)
 
         # Plan a trajectory with trajopt
-        traj = self.planner.plan_pose(start_config, goal_pose.pose, orientation)
+        traj = self.planner.plan_pose(start_config, goal_pose.pose, orientation, max_eef_displacement)
+
+        # for ma in self.planner.get_body_markers():
+        #     self.marker_array_pub.publish(ma)
 
         return traj
 
