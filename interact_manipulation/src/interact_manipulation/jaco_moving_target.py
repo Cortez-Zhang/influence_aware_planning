@@ -284,57 +284,81 @@ class GoalInference(object):
         #print("normalized beliefs {}".format(norm_belief))
         self.beliefs_over_time.append(norm_belief)
         self.current_beliefs = norm_belief.tolist()
-#        return norm_belief
+#       return norm_belief
 
-
-class WaypointCostFunction(CostFunction):
-    def __init__(self, robot, human_model,eef_link_name='j2s7s300_end_effector'):
+class AffectHumanCost(CostFunction):
+    def __init__(self, robot, human_model, eef_link_name='j2s7s300_end_effector'):
         CostFunction.__init__(self, params={'hit_human_penalty': 0.5,
                                             'normalize_sigma': 1.0,
                                             'care_about_distance': 0.1})
-        self.robot = robot
+        self.robot = robot #TODO replace with imported variable
         self.human_model = human_model
-        self.eef_link_name = eef_link_name
-        self.tf_listener = TransformListener()
-        self.robotDOF = 7
+        self.eef_link_name = eef_link_name #TODO replace with param server
+        self.robotDOF = 7 #TODO replace with paramserver
 
     def get_cost(self, configs):
         """ Returns cost based on the distance between the end effector and the human
             this funciton is given as a callback to trajopt
-            @param configs: a list with (number of robot dof x num way points)
+            params
+            ---
+            configs: a list with (number of robot dof x num way points)
             given as a callback from trajopt
-            @Return cost: A floating point cost value to be optimized by trajopt
+            Returns
+            ---
+            cost: A floating point cost value to be optimized by trajopt
         """
-        #reshape the list into a ()
+        #reshape the list of configs into the appropriate shape (DOF,N)
         configs = np.asarray(configs)
         configs = np.reshape(configs, (self.robotDOF,-1))
-        #rospy.loginfo("configurations {}".format(configs))
         
+        #calculate kinematics for each configuration to find end effector in world space
         eef_positions = []
-        #use a for loop because I need to calculate kinematics one at a time
         for i in range(np.shape(configs)[1]):
             config = configs[:,i]
-            eef_positions.append(self.get_OpenRaveFK(config, self.eef_link_name))
+            eef_positions.append(self._get_OpenRaveFK(config, self.eef_link_name))
         
+        # reset the human model before calculating human response - 
+        # human pos will be saved for simulation
         self.human_model.reset_model()
         human_positions = self.human_model.get_human_positions(eef_positions)
         human_velocities = self.human_model.human_velocities
 
-        #self.human_closeness_cost(human_positions, eef_positions) #TODO add param to specify cost
-        #self.human_speed_cost(human_velocities) #TODO add param to specify cost
-        #self.human_go_first_cost(human_positions)
-        return self.human_speed_cost(human_velocities)
+        return self.human_affect(human_positions,human_velocities, eef_positions)
     
-    def human_go_first_cost(self, human_positions):
-        """Calculate the distance above midpoint for human going first
-            This cost can only be used with a single goal. Its meant to be something like an intersection
-            The human and robot cross paths and the robot wants the human to go first.
+    def _human_affect(self, human_positions, human_velocities, eef_positions):
+        """
+        Compute a cost that leverages some affect on the human. To be implemented by subclasses
+        ---
+        Params
+        human_positions: list of (3,) numpy arrays
+        human_velocities: list of (3,) numpy arrays representing velocity
+        eef_positions: list of (3,) location of the end effector in world coordinates
+        """
+        util.raiseNotDefined()
+    
+    def _get_OpenRaveFK(self, config, link_name):
+        """ Calculate the forward kinematics using openRAVE for use in cost evaluation.
             Params
             ---
-            human_positions: list of (3,) numpy arrays
+            config: Robot joint configuration (3,) numpy array
+            link_name: Name of the link to calculate forward kinematics for
         """
-        assert len(self.human_model.goals)==1 
-        
+        q = config.tolist()
+        self.robot.SetDOFValues(q + [0.0, 0.0, 0.0])
+        eef_link = self.robot.GetLink(link_name)
+        if eef_link is None:
+            rospy.logerror("Error: end-effector \"{}\" does not exist".format(self.eef_link_name))
+            raise ValueError("Error: end-effector \"{}\" does not exist".format(self.eef_link_name))
+        eef_pose = openravepy.poseFromMatrix(eef_link.GetTransform())
+        return np.array([eef_pose[4], eef_pose[5], eef_pose[6]])
+
+class HumanGoFirstCost(AffectHumanCost):
+        """ Calculate the distance above midpoint for human going first
+        This cost can only be used with a single goal. Its meant to be something like an intersection
+        The human and robot cross paths and the robot wants the human to go first.
+        """
+    def _human_affect(self, human_positions, human_velocities, eef_positions):
+        assert len(self.human_model.goals)==1     
         cost = 0.0
         #get midpoint between start and goal
         start_pos = self.human_model.start_state.position
@@ -350,291 +374,37 @@ class WaypointCostFunction(CostFunction):
             distance=np.dot(to_mid,midpoint-position)/norm_to_mid
             cost = np.tanh(distance)    
         return cost
-    
-    def human_speed_cost(self, human_velocities):
+     
+class HumanSpeedCost(AffectHumanCost):
+    """
+    Penalize trajectories which make the human go fast
+    """
+    def _human_affect(self, human_positions, human_velocities, eef_positions):
         cost = 0.0
         for vel in human_velocities:
             speed = np.linalg.norm(vel)
-            #rospy.loginfo(speed)
             cost+=speed
         return cost
-           
-    def human_closeness_cost(self,human_positions,eef_positions):
+
+class HumanClosenessCost(AffectHumanCost):     
+    """
+    Penalize trajectories which are close to the human. 
+    """
+    def _human_affect(self, human_positions, human_velocities, eef_positions):
         cost = 0.0
         for i, (human_position, eef_position) in enumerate(zip(human_positions, eef_positions)):
             #rospy.loginfo("human_position {}".format(human_position))
             distance = np.linalg.norm(human_position - eef_position)
-            if distance < self.params['care_about_distance']:
-                # assign cost inverse proportional to the distance squared 
+            if distance < self.params['care_about_distance']: #TODO replace ths with param server? maybe put param server higher up
+                # assign cost inverse proportional to the distance to human squared 
                 # TODO swap this with something more principled
                 cost += self.params['hit_human_penalty'] * 1/(distance)
         #SimplePointSimulator(eef_positions, human_positions, repeat=False).simulate()
         return cost/2.0
+        #TODO add a parameter to scale cost for each function
         #return cost 
 
-    def get_OpenRaveFK(self, config, link_name):
-        """ Calculate the forward kinematics using openRAVE for use in cost evaluation.
-            @Param config: Robot joint configuration (3,) numpy array
-            @Param link_name: Name of the link to calculate forward kinematics for
-        """
-        q = config.tolist()
-        self.robot.SetDOFValues(q + [0.0, 0.0, 0.0])
-        eef_link = self.robot.GetLink(link_name)
-        if eef_link is None:
-            rospy.logerror("Error: end-effector \"{}\" does not exist".format(self.eef_link_name))
-            raise ValueError("Error: end-effector \"{}\" does not exist".format(self.eef_link_name))
-        eef_pose = openravepy.poseFromMatrix(eef_link.GetTransform())
-        return np.array([eef_pose[4], eef_pose[5], eef_pose[6]])
-    
-class InteractiveMarkerAgent():
-    def __init__(self, server_name, position, menu_labels=[], base_frame = "root", scale = .15):
-        self._scale = scale
-        self.server = InteractiveMarkerServer(server_name)
-        self.menu_handler = MenuHandler()
-        self.menu_labels = menu_labels
-        self.setup_menu_handler()
-        self.marker_position = Point(position.x, position.y, position.z)
-        self.base_frame = base_frame
-
-    def setup_menu_handler(self):
-        for menu_label in self.menu_labels:
-            self.menu_handler.insert(menu_label, callback=self._onclick_callback )
-
-    def _onclick_callback(self, feedback):
-        pass
-    
-    def makeBox(self, msg):
-        marker = Marker()
-        marker.type = Marker.CUBE
-        marker.scale.x = msg.scale * 0.45
-        marker.scale.y = msg.scale * 0.45
-        marker.scale.z = msg.scale * 0.45
-        marker.color.r = 0.5
-        marker.color.g = 0.5
-        marker.color.b = 0.5
-        marker.color.a = 1.0
-        return marker
-
-    def makeBoxControl(self, msg):
-        control = InteractiveMarkerControl()
-        control.always_visible = True
-        control.markers.append( self.makeBox(msg) )
-        msg.controls.append( control )
-        return control
-
-#class data
-
-class AssertiveRobotPlanner(InteractiveMarkerAgent):
-    def __init__(self):
-        initial_position = Point(-0.5,0.216,0.538) #initial position of the marker
-        menu_label_list = []
-        menu_label_list.append("Plan and Execute")
-        menu_label_list.append("Reset Human")
-        menu_label_list.append("Reset Robot")
-        InteractiveMarkerAgent.__init__(self, "End_Goal", initial_position, menu_labels=menu_label_list)
-
-        self.jaco_interface = JacoInterface()
-        self.make6DofMarker(False, InteractiveMarkerControl.MOVE_ROTATE_3D, True )
-        self.server.applyChanges()
-
-        self.start_human_pub = rospy.Publisher("start_human",Float32MultiArray , queue_size=10)
-        self.reset_human_pub = rospy.Publisher("reset_human",Empty, queue_size=10)
-        self.human_start_pose = Pose(Point(-0.5,0.216,0.538),Quaternion(0,0,0,1))
-
-    def _onclick_callback(self, feedback):
-        if feedback.event_type == InteractiveMarkerFeedback.MENU_SELECT:
-            if feedback.menu_entry_id == 1:
-                #Publish empty message to start human topic
-                self._plan_and_execute(feedback)
-
-            elif feedback.menu_entry_id == 2:
-                self.reset_human_pub.publish(self.human_start_pose)
-            elif feedback.menu_entry_id == 3:
-                self.jaco_interface.home()
-        self.server.applyChanges()
-
-    def _plan_and_execute(self, feedback):
-        """ Callback to interactive marker
-            This is where the main stuff happens. 
-        """
-        self.jaco_interface.home()
-
-        #get the location of the robot and use that as the start pose
-        start_pose = self.jaco_interface.arm_group.get_current_pose()
-
-        #create the goal_pose request for the robot
-        goal_pose = PoseStamped()
-        goal_pose.header = feedback.header
-        goal_pose.pose.position = Point(-0.2,-0.2,0.538)
-        goal_pose.pose.orientation = start_pose.pose.orientation
-        
-        goal1 = np.array([-0.4,-0.1,0.538])
-        goal2 = np.array([-0.2,-0.2,0.538])
-        goals = [goal1, goal2]
-        goal_inference = GoalInference(goals, variance = 2)
-
-        #create the human model
-        human_start_state = HumanState(np.array([-.3,0.3,0.538]), np.array([0,0,0]))
-        human_model = HumanModel(human_start_state, goals, simulation_method="speed_based_certainty", goal_inference=goal_inference)
-        
-        #create the robot cost function, including human model
-        cost_func = WaypointCostFunction(self.jaco_interface.planner.jaco, human_model)
-        self.jaco_interface.planner.cost_functions = [cost_func]
-        self.jaco_interface.planner.trajopt_num_waypoints = 20
-        
-        rospy.loginfo("Requesting plan from start_pose:\n {} \n goal_pose:\n {}".format(start_pose, goal_pose))
-
-        #call trajopt
-        traj = self.jaco_interface.plan(start_pose, goal_pose)
-
-        marker_wrapper.show_position_marker(human_model.human_positions[-1], label="human end", ident=3)
-        
-        #package up the human trajectory into a message
-        #trajmsg = self._to_trajectory_message(human_model.human_positions)
-        
-        #send the humna trajectory to an interactive marker for visualization
-        #self.start_human_pub.publish(trajmsg)
-        #time_before = rospy.get_time()
-
-        robot_positions = traj.joint_trajectory.points
-        human_positions = human_model.human_positions
-        simulator = SimplePointSimulator(robot_positions, human_positions, self.jaco_interface)
-        simulator.simulate()
-
-        #self.jaco_interface.execute(traj)
-        #rospy.loginfo("time to execute {}".format(rospy.get_time()-time_before))
-
-    def _to_trajectory_message(self, positions):
-        """Convert the human positions to a message that behaves like a trajectory
-            to be passed to human.py
-            #TODO this function is now obsolete
-        """
-        float_array = Float32MultiArray()
-        
-        layout = MultiArrayLayout()
-        layout.data_offset = 0
-
-        dims = []
-        dim = MultiArrayDimension()
-        dim.label = "traj"
-        dim.size = 0
-        dim.stride = 0
-        dims.append(dim)
-
-        layout.dim = dims
-
-        float_list = []
-        for position in positions:
-            float_list.extend(position.tolist())
-        float_array.data = float_list
-        float_array.layout = layout
-
-        return float_array
-    
-    def run(self):        
-        self.jaco_interface.home()
-        rospy.spin()
-
-    def make6DofMarker(self, fixed, interaction_mode, show_6dof = False):
-        int_marker = InteractiveMarker()
-        int_marker.header.frame_id = self.base_frame
-        int_marker.pose.position = self.marker_position
-        int_marker.pose.orientation = Quaternion(.707,0,0,-.707)
-        int_marker.scale = self._scale
-
-        int_marker.name = "simple_6dof"
-        int_marker.description = "Simple 6-DOF Control"
-
-        # insert a box
-        self.makeBoxControl(int_marker)
-        int_marker.controls[0].interaction_mode = interaction_mode
-
-        if fixed:
-            int_marker.name += "_fixed"
-            int_marker.description += "\n(fixed orientation)"
-
-        if interaction_mode != InteractiveMarkerControl.NONE:
-            control_modes_dict = { 
-                            InteractiveMarkerControl.MOVE_3D : "MOVE_3D",
-                            InteractiveMarkerControl.ROTATE_3D : "ROTATE_3D",
-                            InteractiveMarkerControl.MOVE_ROTATE_3D : "MOVE_ROTATE_3D" }
-            int_marker.name += "_" + control_modes_dict[interaction_mode]
-            int_marker.description = "3D Control"
-            if show_6dof: 
-                int_marker.description += " + 6-DOF controls"
-                int_marker.description += "\n" + control_modes_dict[interaction_mode]
-        
-        if show_6dof: 
-            control = InteractiveMarkerControl()
-            control.orientation.w = 1
-            control.orientation.x = 1
-            control.orientation.y = 0
-            control.orientation.z = 0
-            control.name = "rotate_x"
-            control.interaction_mode = InteractiveMarkerControl.ROTATE_AXIS
-            if fixed:
-                control.orientation_mode = InteractiveMarkerControl.FIXED
-            int_marker.controls.append(control)
-
-            control = InteractiveMarkerControl()
-            control.orientation.w = 1
-            control.orientation.x = 1
-            control.orientation.y = 0
-            control.orientation.z = 0
-            control.name = "move_x"
-            control.interaction_mode = InteractiveMarkerControl.MOVE_AXIS
-            if fixed:
-                control.orientation_mode = InteractiveMarkerControl.FIXED
-            int_marker.controls.append(control)
-
-            control = InteractiveMarkerControl()
-            control.orientation.w = 1
-            control.orientation.x = 0
-            control.orientation.y = 1
-            control.orientation.z = 0
-            control.name = "rotate_z"
-            control.interaction_mode = InteractiveMarkerControl.ROTATE_AXIS
-            if fixed:
-                control.orientation_mode = InteractiveMarkerControl.FIXED
-            int_marker.controls.append(control)
-
-            control = InteractiveMarkerControl()
-            control.orientation.w = 1
-            control.orientation.x = 0
-            control.orientation.y = 1
-            control.orientation.z = 0
-            control.name = "move_z"
-            control.interaction_mode = InteractiveMarkerControl.MOVE_AXIS
-            if fixed:
-                control.orientation_mode = InteractiveMarkerControl.FIXED
-            int_marker.controls.append(control)
-
-            control = InteractiveMarkerControl()
-            control.orientation.w = 1
-            control.orientation.x = 0
-            control.orientation.y = 0
-            control.orientation.z = 1
-            control.name = "rotate_y"
-            control.interaction_mode = InteractiveMarkerControl.ROTATE_AXIS
-            if fixed:
-                control.orientation_mode = InteractiveMarkerControl.FIXED
-            int_marker.controls.append(control)
-
-            control = InteractiveMarkerControl()
-            control.orientation.w = 1
-            control.orientation.x = 0
-            control.orientation.y = 0
-            control.orientation.z = 1
-            control.name = "move_y"
-            control.interaction_mode = InteractiveMarkerControl.MOVE_AXIS
-            if fixed:
-                control.orientation_mode = InteractiveMarkerControl.FIXED
-            int_marker.controls.append(control)
-
-        self.server.insert(int_marker, self._onclick_callback)
-        self.menu_handler.apply( self.server, int_marker.name )
-
-class SimplePointSimulator():
+class SimplePointSimulator(object):
     """ A simple simulator to show markers for a human and robot """
     def __init__(self, robot_positions, human_positions, jaco_interface=None, repeat=True):
         self.Timer = None
@@ -739,11 +509,49 @@ class SimplePointSimulator():
 
         return playback_pos
 
+def main():
+        jaco_interface = JacoInterface()
+        jaco_interface.home()
 
+        #get the location of the robot and use that as the start pose
+        start_pose = jaco_interface.arm_group.get_current_pose()
+
+        #create the goal_pose request for the robot
+        goal_pose = PoseStamped()
+        goal_pose.header = feedback.header
+        goal_pose.pose.position = Point(-0.2,-0.2,0.538)
+        goal_pose.pose.orientation = start_pose.pose.orientation
+        
+        goal1 = np.array([-0.4,-0.1,0.538])
+        goal2 = np.array([-0.2,-0.2,0.538])
+        goals = [goal1, goal2]
+        goal_inference = GoalInference(goals, variance = 2)
+
+        #create the human model
+        human_start_state = HumanState(np.array([-.3,0.3,0.538]), np.array([0,0,0]))
+        human_model = HumanModel(human_start_state, goals, simulation_method="speed_based_certainty", goal_inference=goal_inference)
+        
+        #create the robot cost function, including human model
+        #TODO consider a Factory here so I dont have to handle all the function names
+        cost_func = HumanSpeedCost(jaco_interface.planner.jaco, human_model)
+        jaco_interface.planner.cost_functions = [cost_func]
+        jaco_interface.planner.trajopt_num_waypoints = 20
+        
+        rospy.loginfo("Requesting plan from start_pose:\n {} \n goal_pose:\n {}".format(start_pose, goal_pose))
+
+        #call trajopt
+        traj = jaco_interface.plan(start_pose, goal_pose)
+
+        marker_wrapper.show_position_marker(human_model.human_positions[-1], label="human end", ident=3)
+
+        robot_positions = traj.joint_trajectory.points
+        human_positions = human_model.human_positions
+        simulator = SimplePointSimulator(robot_positions, human_positions, jaco_interface)
+        simulator.simulate()
+        rospy.spin()
 
 if __name__=="__main__":
     moveit_commander.roscpp_initialize(sys.argv)
     rospy.init_node('jaco_moving_target')
-    human_aware_planner = AssertiveRobotPlanner()
-    human_aware_planner.run()
+    main()
     moveit_commander.roscpp_shutdown()
