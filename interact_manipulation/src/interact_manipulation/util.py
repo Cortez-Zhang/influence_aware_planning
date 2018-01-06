@@ -1,5 +1,6 @@
 import inspect
 import rospy
+import numpy as np
 
 def raiseNotDefined():
     fileName = inspect.stack()[1][1]
