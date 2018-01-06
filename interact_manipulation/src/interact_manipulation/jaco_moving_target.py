@@ -164,7 +164,7 @@ class HumanModel():
             b = self.goal_inference.current_beliefs
 
             #TODO there can only be two goals expand so it can be more
-            speed = self.params["max_certainty_speed"]*(min(b)*2)
+            speed = self.params["max_certainty_speed"]*(1-(min(b)*2))
             human_goal = b.index(min(b))
             goal_dir = GoalInference.direction(curr_pos,self.goals[human_goal]) #humans goal direction
             
@@ -324,7 +324,7 @@ class WaypointCostFunction(CostFunction):
         #self.human_speed_cost(human_velocities) #TODO add param to specify cost
         #self.human_go_first_cost(human_positions)
         return self.human_speed_cost(human_velocities)
-    
+
     def human_go_first_cost(self, human_positions):
         """Calculate the distance above midpoint for human going first
             This cost can only be used with a single goal. Its meant to be something like an intersection
@@ -498,6 +498,8 @@ class AssertiveRobotPlanner(InteractiveMarkerAgent):
 
         robot_positions = traj.joint_trajectory.points
         human_positions = human_model.human_positions
+        human_beliefs = np.asarray(human_model.goal_inference.beliefs_over_time)
+
         simulator = SimplePointSimulator(robot_positions, human_positions, self.jaco_interface)
         simulator.simulate()
 

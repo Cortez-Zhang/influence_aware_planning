@@ -42,9 +42,9 @@ class Human(InteractiveMarkerAgent):
         pass
     
     def set_states(self, sim_pos):
-        """ Interpolates simulated_positions and sets self.playback_positions (3,num_playback_wpts)
-            numpy array
-            @Param sim_pos: A (num_sim_wpts,3) numpy array
+        """ Interpolates simulated_positions and sets self.playback_positions (3,num_playback_wpts) numpy array
+            -------
+            Params: sim_pos a (num_sim_wpts,3) numpy array
         """
         num_sim_wpts = 21 #TODO set this with a parameter server var
         end_time = num_sim_wpts*self.simulated_dt
