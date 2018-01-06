@@ -324,7 +324,7 @@ class AffectHumanCost(CostFunction):
         human_velocities = self.human_model.human_velocities
 
         return self.human_affect(human_positions,human_velocities, eef_positions)
-    
+
     def _human_affect(self, human_positions, human_velocities, eef_positions):
         """
         Compute a cost that leverages some affect on the human. To be implemented by subclasses
@@ -334,7 +334,7 @@ class AffectHumanCost(CostFunction):
         human_velocities: list of (3,) numpy arrays representing velocity
         eef_positions: list of (3,) location of the end effector in world coordinates
         """
-        util.raiseNotDefined()
+        pass
     
     def _get_OpenRaveFK(self, config, link_name):
         """ Calculate the forward kinematics using openRAVE for use in cost evaluation.
@@ -353,10 +353,10 @@ class AffectHumanCost(CostFunction):
         return np.array([eef_pose[4], eef_pose[5], eef_pose[6]])
 
 class HumanGoFirstCost(AffectHumanCost):
-        """ Calculate the distance above midpoint for human going first
-        This cost can only be used with a single goal. Its meant to be something like an intersection
-        The human and robot cross paths and the robot wants the human to go first.
-        """
+    """ Calculate the distance above midpoint for human going first
+    This cost can only be used with a single goal. Its meant to be something like an intersection
+    The human and robot cross paths and the robot wants the human to go first.
+    """
     def _human_affect(self, human_positions, human_velocities, eef_positions):
         assert len(self.human_model.goals)==1     
         cost = 0.0
@@ -518,7 +518,11 @@ def main():
 
         #create the goal_pose request for the robot
         goal_pose = PoseStamped()
-        goal_pose.header = feedback.header
+        header = Header()
+        header.frame_id ="0"
+        header.seq = 31266
+        header.stamp = rospy.get_rostime()
+        goal_pose.header = header
         goal_pose.pose.position = Point(-0.2,-0.2,0.538)
         goal_pose.pose.orientation = start_pose.pose.orientation
         
