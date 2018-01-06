@@ -40,10 +40,8 @@ def show_position_marker(position, label = None, ident = 1, scale = (0.05,0.05,0
     waypoint_marker.color.a = 0.50
     waypoint_marker.lifetime = rospy.Duration(0)
     marker_pub.publish(waypoint_marker)
-    #rospy.loginfo("before numpy_position_tomessage {}".format(position))
 
     if label:
-        #position[2] = position[2]+.01   #TODO move the z position of the text up a bit
         text_marker = Marker()
         text_marker.header.frame_id = '/root' #TOOO should this be root?
         text_marker.header.stamp = rospy.get_rostime()
@@ -60,7 +58,6 @@ def show_position_marker(position, label = None, ident = 1, scale = (0.05,0.05,0
         text_marker.lifetime = rospy.Duration(0)
         marker_pub.publish(text_marker)
         
-    #rospy.loginfo("after numpy_position_tomessage {}".format(position))
 
 def numpy_position_tomessage(np_position):
     """ Converts a numpy (3,) position to a Point message. orientation is set to 
@@ -71,13 +68,3 @@ def numpy_position_tomessage(np_position):
     pose.position = Point(np_position[0],np_position[1],np_position[2])
     pose.orientation = Quaternion(0,0,0,1)
     return pose
-
-# def main():
-#     rospy.init_node('marker_wrapper')
-#     rospy.spin()
-
-# if __name__ == '__main__':
-#     try:
-#         main()
-#     except rospy.ROSInterruptException:
-#         pass
