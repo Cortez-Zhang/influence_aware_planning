@@ -323,7 +323,7 @@ class AffectHumanCost(CostFunction):
         human_positions = self.human_model.get_human_positions(eef_positions)
         human_velocities = self.human_model.human_velocities
 
-        return self.human_affect(human_positions,human_velocities, eef_positions)
+        return self._human_affect(human_positions,human_velocities, eef_positions)
 
     def _human_affect(self, human_positions, human_velocities, eef_positions):
         """
@@ -519,8 +519,8 @@ def main():
         #create the goal_pose request for the robot
         goal_pose = PoseStamped()
         header = Header()
-        header.frame_id ="0"
-        header.seq = 31266
+        header.frame_id ="root"
+        header.seq = 3
         header.stamp = rospy.get_rostime()
         goal_pose.header = header
         goal_pose.pose.position = Point(-0.2,-0.2,0.538)
