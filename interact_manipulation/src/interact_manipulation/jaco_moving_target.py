@@ -8,6 +8,8 @@ import time
 import numpy as np
 import datetime
 
+import util
+
 from interactive_markers.interactive_marker_server import *
 from interactive_markers.menu_handler import *
 from visualization_msgs.msg import *
@@ -56,7 +58,8 @@ class HumanState():
     
     __repr__ = __str__
 
-class HumanModel():
+
+class HumanModel(object):
     """ Simulates a human for use in path planning (trajopt)
         Params
         ---
@@ -66,31 +69,26 @@ class HumanModel():
         e.g. constant velocity, point_mass, certainty_based_speed
         dt: the fixed time between waypoints (default 0.2)
     """
-    def __init__(self, start_state, goals, simulation_method, goal_inference=None, dt=.2, params = {'mass': .006, 
-                                                                        'robot_aggressiveness': .3,
-                                                                        'drag': 0,
-                                                                        'force_cap': 0.02,
-                                                                        'max_certainty_speed': 0.2}):
+    def __init__(self, start_state, dt=.2, params = {'mass': .006, 
+                                                    'robot_aggressiveness': .3,
+                                                    'drag': 0,
+                                                    'force_cap': 0.02,
+                                                    'max_certainty_speed': 0.2}):
         self.start_state = copy.deepcopy(start_state)
-        self.goals = goals
-        self.simulation_method = simulation_method
-        self.dt = dt
-        self.params = params
-        self.goal_inference = goal_inference #GoalInference instance, set to none unless simulation_method == certainty_based_speed
+
+        self.dt = dt #TODO replace with paramserver
+        self.params = params #TODO replace with param server Is it bad to call them a bunch?
         
+        #list to keep track of human positions for displaying
         self.human_positions = []
         self.current_state = copy.deepcopy(start_state)
         self.human_positions.append(start_state.position)
 
         marker_wrapper.show_position_marker(label="human \n start\n\n", position = start_state.position, ident=1, color=(1,0,0))
-        for i, goal in enumerate(goals):
-           marker_wrapper.show_position_marker(label="human \n goal\n\n", position= goal, ident=10+i, color=(0,1,0))
-    
+
     def reset_model(self):
         """ Reset the model to prepare for another forward simulation
-        """
-        if self.goal_inference:
-            self.goal_inference.reset()
+        """            
         self.human_positions = []
         self.human_velocities = []
         self.current_state = copy.deepcopy(self.start_state)
@@ -102,27 +100,83 @@ class HumanModel():
             Param
             ---
             eef_positions: a list of (3,) numpy arrays containing the positions of the end effector
-        """
-        advance_model = getattr(self, self.simulation_method)
-        
+        """        
         prev_eef_pos = eef_positions[0]
         for eef_pos in eef_positions:
-            advance_model(eef_pos, prev_eef_pos)
+            self.advance_model(eef_pos, prev_eef_pos)
             prev_eef_pos = eef_pos.copy()
 
-        return self.human_positions    
+        return self.human_positions
+    
+    def advance_model(self,eef_position, prev_eef_pos):
+        """advance the model one step based upon some method"""
+        pass
+        #TODO add util not defined
+
+class CertaintyBasedSpeedModel(HumanModel):
+    def __init__(self, start_state, goals, goal_inference):
+        super(CertaintyBasedSpeedModel, self).__init__(start_state)
+        self.goals = goals
+        self.goal_inference = goal_inference
+        for i, goal in enumerate(goals):
+           marker_wrapper.show_position_marker(label="human \n goal\n\n", position= goal, ident=10+i, color=(0,1,0))
+    
+    def reset_model(self):
+        super(CertaintyBasedSpeedModel, self).reset_model()
+        self.goal_inference.reset()
+
+    def advance_model(self, eef_position, prev_eef_pos):
+        """ Human moves at a speed proportional to belief over robot goals
+            The human will move to the goal the robot is not going towards
+            the human moves faster if it is more certain that is the goal
+            Param
+            ---
+            eef_position: a (3,) numpy array with xyz position of robot end effector
+        """     
+        curr_pos = self.current_state.position
+        #TODO make a for loop
+        dist_goal1 = np.linalg.norm(curr_pos - self.goals[0])
+        dist_goal2 = np.linalg.norm(curr_pos - self.goals[1])
+
+        if dist_goal1>0.05 and dist_goal2>0.05:
+            self.goal_inference.update(eef_position,prev_eef_pos)
+            b = self.goal_inference.current_beliefs
+
+            #TODO there can only be two goals expand so it can be more
+            speed = self.params["max_certainty_speed"]*(1-(min(b)*2))
+            human_goal = b.index(min(b))
+            goal_dir = util.direction(curr_pos,self.goals[human_goal]) #humans goal direction
             
-    def constant_velocity(self, eef_position, prev_eef_pos):
+            next_vel = speed*goal_dir
+            next_pos = next_vel*self.dt+curr_pos
+            
+            self.current_state.position = next_pos
+            self.current_state.velocity = next_vel
+            
+        else:
+            next_pos = self.current_state.position
+            next_vel = self.current_state.velocity
+            #self.human_velocities
+        self.human_velocities.append(next_vel.copy())
+        self.human_positions.append(next_pos.copy())
+
+class ConstantVelocityModel(HumanModel):
+    #TODO get rid of advance model and vectorize all in get_human_position
+    def advance_model(self, eef_position, prev_eef_pos):
         """ Evolve the human state forward using a constant velocity assumption
         """
-        #rospy.loginfo("current_state {}".format(self.current_state))
         curr_pos = self.current_state.position
         next_pos = curr_pos + self.current_state.velocity*self.dt
         self.current_state.position = next_pos
-
         self.human_positions.append(next_pos)
-        
-    def point_mass(self, eef_position, prev_eef_pos):
+
+class PotentialFieldModel(HumanModel):
+    def __init__(self, start_state, goal, goal_inference):
+        super().__init__(start_state)
+        self.goal = goals[0]
+        #the tuning currently only works with one goal
+    
+    def advance_model(self, eef_position, prev_eef_pos):
         """ Evolve the human state forward using a point mass model
             We assume the human will move away from the robot and towards its goal
         """
@@ -145,41 +199,6 @@ class HumanModel():
 
         self.human_velocities.append(next_vel)
         self.human_positions.append(next_pos)
-    
-    def speed_based_certainty(self, eef_position, prev_eef_pos):
-        """ Human moves at a speed proportional to belief over robot goals
-            The human will move to the goal the robot is not going towards
-            the human moves faster if it is more certain that is the goal
-            Param
-            ---
-            eef_position: a (3,) numpy array with xyz position of robot end effector
-        """
-        #TODO what happens if I am at the goal?
-        curr_pos = self.current_state.position
-        dist_goal1 = np.linalg.norm(curr_pos - self.goals[0])
-        dist_goal2 = np.linalg.norm(curr_pos - self.goals[1])
-        #rospy.loginfo("dist_goal1 {}, dist_goal2 {}".format(dist_goal1, dist_goal2))
-        if dist_goal1>0.05 and dist_goal2>0.05:
-            self.goal_inference.update(eef_position,prev_eef_pos)
-            b = self.goal_inference.current_beliefs
-
-            #TODO there can only be two goals expand so it can be more
-            speed = self.params["max_certainty_speed"]*(1-(min(b)*2))
-            human_goal = b.index(min(b))
-            goal_dir = GoalInference.direction(curr_pos,self.goals[human_goal]) #humans goal direction
-            
-            next_vel = speed*goal_dir
-            next_pos = next_vel*self.dt+curr_pos
-            
-            self.current_state.position = next_pos
-            self.current_state.velocity = next_vel
-            
-        else:
-            next_pos = self.current_state.position
-            next_vel = self.current_state.velocity
-            #self.human_velocities
-        self.human_velocities.append(next_vel.copy())
-        self.human_positions.append(next_pos.copy())
 
     def potential_field(self, obstacle, curr_pos):
         """ Calculate distance penalty for obstacles
@@ -188,7 +207,6 @@ class HumanModel():
             obstacle: a (3,) numpy array with position of obstacle or goal
             curr_pos: a (3,) numpy array with position of human
         """ 
-        #TODO vectorize this using vectorized comparisons
         epsilon = self.params["force_cap"]
 
         force = np.empty((3,))
@@ -235,31 +253,7 @@ class GoalInference(object):
         return lambda x: (1./np.sqrt(2*math.pi*np.linalg.det(cov))) * np.exp(
                 -(1./2.) * np.dot(np.dot((x - mu), np.linalg.inv(cov)), (x - mu))
                 )
-    @staticmethod
-    def direction(x, y):
-        """ Compute the direction from x to y
-            Params
-            ---
-            x: a numpy array
-            y: a numpy array
-            Returns
-            ---
-            normalized direction: numpy array of unit length to y from x
-        """
-        return (y - x)/np.linalg.norm(y - x + 1e-12)
     
-    @staticmethod
-    def normalize(beliefs):
-        """ Normalize a descrete set of beliefs
-            Params
-            ---
-            beliefs: a list of scaler beliefs #TODO check this
-            Returns
-            ---
-            norm_beliefs: a np array of normalized beliefs
-        """
-        return np.asarray(beliefs)/np.sum(np.asarray(beliefs))
-
     def update(self, eef_pos, prev_eef_pos):
         """ Updates the belief over goals
             Params
@@ -270,21 +264,20 @@ class GoalInference(object):
             ---
             norm_beliefs: a list of new beliefs given the observation (eef_pos)
         """
-        #print("prev_eef_pos {} curr_eef_pos {}".format(prev_eef_pos,eef_pos))
-        goal_dirs = [GoalInference.direction(eef_pos,goal) for goal in self.goals]
-        #print("direction to goals: {}".format(goal_dirs))
-        #rospy.loginfo("goal_dirs {}".format(goal_dirs))
-        interaction_dir = GoalInference.direction(prev_eef_pos,eef_pos)
-        #print("interaction_dir: {}".format(interaction_dir))
-        #rospy.loginfo("prev_eef_pos {}, eef_pos {}".format(prev_eef_pos, eef_pos))
-        #rospy.loginfo("interaction_dir {}")
+        #find the direction of all the goals
+        goal_dirs = [util.direction(eef_pos,goal) for goal in self.goals]
+        
+        # the movement an agent takes from one step to the next provides evidence for the 
+        # direction which is used to update beliefs
+        interaction_dir = util.direction(prev_eef_pos,eef_pos)
+        
+        #update the beliefs based on the new information from the movement the human has made (interaction dir)
         beliefs = np.array([b*self.gaussian(goal_dir)(interaction_dir) for (b, goal_dir) in zip(self.current_beliefs, goal_dirs)])
-        #print("beliefs {}".format(beliefs))
-        norm_belief = GoalInference.normalize(beliefs)
-        #print("normalized beliefs {}".format(norm_belief))
+        norm_belief = util.normalize(beliefs)
+        
+        #update the beliefs and store the belief history for debug and analysis
         self.beliefs_over_time.append(norm_belief)
         self.current_beliefs = norm_belief.tolist()
-#       return norm_belief
 
 class AffectHumanCost(CostFunction):
     def __init__(self, robot, human_model, eef_link_name='j2s7s300_end_effector'):
@@ -396,13 +389,12 @@ class HumanClosenessCost(AffectHumanCost):
             #rospy.loginfo("human_position {}".format(human_position))
             distance = np.linalg.norm(human_position - eef_position)
             if distance < self.params['care_about_distance']: #TODO replace ths with param server? maybe put param server higher up
+                #TODO use potential field
                 # assign cost inverse proportional to the distance to human squared 
-                # TODO swap this with something more principled
                 cost += self.params['hit_human_penalty'] * 1/(distance)
-        #SimplePointSimulator(eef_positions, human_positions, repeat=False).simulate()
         return cost/2.0
         #TODO add a parameter to scale cost for each function
-        #return cost 
+
 
 class SimplePointSimulator(object):
     """ A simple simulator to show markers for a human and robot """
@@ -533,7 +525,8 @@ def main():
 
         #create the human model
         human_start_state = HumanState(np.array([-.3,0.3,0.538]), np.array([0,0,0]))
-        human_model = HumanModel(human_start_state, goals, simulation_method="speed_based_certainty", goal_inference=goal_inference)
+        
+        human_model = CertaintyBasedSpeedModel(human_start_state, goals, goal_inference=goal_inference)
         
         #create the robot cost function, including human model
         #TODO consider a Factory here so I dont have to handle all the function names
