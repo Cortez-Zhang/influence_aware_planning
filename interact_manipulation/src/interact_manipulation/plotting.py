@@ -34,15 +34,6 @@ def plot():
     ax_bchart.set_ylabel('Belief')
     ax_bchart.set_title('Robot Beliefs over goals')
     
-    # eef_positions = []
-    # #Synthesize the data
-    # for i in range(20):
-    #     x = i/10.0
-    #     y = i/10.0
-    #     z = 0
-    #     eef_positions.append(np.array([x,y,z]))
-    
-    print(eef_positions)
 
     beliefs = [0.5,0.5]
     num_waypoints = 20
