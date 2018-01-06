@@ -10,16 +10,13 @@ import datetime
 
 import util
 
-from interactive_markers.interactive_marker_server import *
-from interactive_markers.menu_handler import *
-from visualization_msgs.msg import *
 import moveit_commander
-from jaco import JacoInterface
-from jaco_trajopt import CostFunction
+from moveit_interface import jaco_interface
+from trajopt_interface import CostFunction, jaco_trajopt
+
+from visualization_msgs.msg import *
 from geometry_msgs.msg import *
-from tf import TransformBroadcaster, TransformListener
-from math import sin
-from std_msgs.msg import Empty, Float32MultiArray, MultiArrayLayout, MultiArrayDimension
+from std_msgs.msg import Empty, Float32MultiArray, MultiArrayLayout, MultiArrayDimension, Header
 
 import marker_wrapper
 
@@ -29,9 +26,6 @@ class HumanState():
         @Param velocity: Human velocity (3,) numpy array
     """
     def __init__(self, position, velocity):
-        """
-
-        """
         self.position = position
         self.velocity = velocity
 
@@ -280,11 +274,10 @@ class GoalInference(object):
         self.current_beliefs = norm_belief.tolist()
 
 class AffectHumanCost(CostFunction):
-    def __init__(self, robot, human_model, eef_link_name='j2s7s300_end_effector'):
+    def __init__(self, human_model, eef_link_name='j2s7s300_end_effector'):
         CostFunction.__init__(self, params={'hit_human_penalty': 0.5,
                                             'normalize_sigma': 1.0,
                                             'care_about_distance': 0.1})
-        self.robot = robot #TODO replace with imported variable
         self.human_model = human_model
         self.eef_link_name = eef_link_name #TODO replace with param server
         self.robotDOF = 7 #TODO replace with paramserver
@@ -337,8 +330,8 @@ class AffectHumanCost(CostFunction):
             link_name: Name of the link to calculate forward kinematics for
         """
         q = config.tolist()
-        self.robot.SetDOFValues(q + [0.0, 0.0, 0.0])
-        eef_link = self.robot.GetLink(link_name)
+        jaco_trajopt.jaco.SetDOFValues(q + [0.0, 0.0, 0.0])
+        eef_link = jaco_trajopt.jaco.GetLink(link_name)
         if eef_link is None:
             rospy.logerror("Error: end-effector \"{}\" does not exist".format(self.eef_link_name))
             raise ValueError("Error: end-effector \"{}\" does not exist".format(self.eef_link_name))
@@ -453,7 +446,7 @@ class SimplePointSimulator(object):
         processed_positions = []
         for point in robot_positions:
             joints = point.positions
-            pose = self.jaco_interface.fk(joints)
+            pose = jaco_interface.fk(joints)
             pos = pose.pose_stamped[0].pose.position
             position = np.array([pos.x,pos.y,pos.z])
             processed_positions.append(position)
@@ -502,7 +495,6 @@ class SimplePointSimulator(object):
         return playback_pos
 
 def main():
-        jaco_interface = JacoInterface()
         jaco_interface.home()
 
         #get the location of the robot and use that as the start pose
@@ -530,9 +522,9 @@ def main():
         
         #create the robot cost function, including human model
         #TODO consider a Factory here so I dont have to handle all the function names
-        cost_func = HumanSpeedCost(jaco_interface.planner.jaco, human_model)
-        jaco_interface.planner.cost_functions = [cost_func]
-        jaco_interface.planner.trajopt_num_waypoints = 20
+        cost_func = HumanSpeedCost(human_model)
+        jaco_trajopt.cost_functions = [cost_func]
+        jaco_trajopt.trajopt_num_waypoints = 20 #TODO set this with a param from parameter server
         
         rospy.loginfo("Requesting plan from start_pose:\n {} \n goal_pose:\n {}".format(start_pose, goal_pose))
 

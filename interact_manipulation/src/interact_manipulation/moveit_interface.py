@@ -9,13 +9,13 @@ from moveit_msgs.srv import GetPositionIK, GetPositionFK
 from moveit_msgs.msg import PositionIKRequest, DisplayTrajectory, RobotState
 from std_msgs.msg import Header
 from visualization_msgs.msg import Marker, MarkerArray
-from jaco_trajopt import JacoTrajopt
+
+from trajopt_interface import jaco_trajopt
 
 class JacoInterface:
     def __init__(self):
         self.robot = moveit_commander.RobotCommander()
-        # print(self.robot.get_group_names())
-        # print(self.robot.get_current_state())
+
         rospy.sleep(5)
         self.arm_group = moveit_commander.MoveGroupCommander('arm')
 
@@ -32,7 +32,6 @@ class JacoInterface:
         rospy.wait_for_service('/compute_fk')
         self.compute_fk = rospy.ServiceProxy('/compute_fk', GetPositionFK)
 
-        self.planner = JacoTrajopt()
         self.home_pose = [0.0,2.9,0.0,1.3,4.2,1.4,0.0]
 
     def ik(self, pose_stamped, group_name='arm'):
@@ -53,7 +52,7 @@ class JacoInterface:
         """ Computes the forward kinematics """
         header = Header()
         robot_state = RobotState()
-        robot_state.joint_state.name = self.planner.joint_names
+        robot_state.joint_state.name = jaco_trajopt.joint_names
         robot_state.joint_state.position = joints
         return self.compute_fk(header, links, robot_state)
 
@@ -110,7 +109,7 @@ class JacoInterface:
 
             rospy.loginfo("Planning trajopt path from start {},to goal {}".format(start_config, goal_config))
             # Plan a trajectory with trajopt
-            traj = self.planner.plan(start_config, goal_config)
+            traj = jaco_trajopt.plan(start_config, goal_config)
         #print(traj)
 
         return traj
@@ -163,7 +162,7 @@ class JacoInterface:
         print("start config = {}, goal config = {}".format(start_config, goal_config))
 
         # Plan a trajectory with trajopt
-        traj = self.planner.plan(start_config, goal_config)
+        traj = jaco_trajopt.plan(start_config, goal_config)
         # print(traj)
 
         return traj
@@ -191,75 +190,19 @@ class JacoInterface:
         traj = self.plan(start_pose, goal_pose)
         self.execute(traj)
 
+jaco_interface = JacoInterface()
 
 def main():
     moveit_commander.roscpp_initialize(sys.argv)
     rospy.init_node('jaco_move_group')
 
-    jaco = JacoInterface()
-
-    # Add a coke can
-    rospack = rospkg.RosPack()
-    package_path = rospack.get_path('interact_manipulation')
-    coke_can_urdf_path = package_path + '/data/coke_can.urdf'
-    jaco.planner.load_body_from_urdf(coke_can_urdf_path, np.array([[1.0, 0.0, 0.0, 0.25],
-                                                                   [0.0, 1.0, 0.0, 0.0],
-                                                                   [0.0, 0.0, 1.0, 0.75],
-                                                                   [0.0, 0.0, 0.0, 1.0]]))
-
-    # print(arm_group.get_current_pose())
-
-    # Move the arm to the initial configuration
-    start_pose = jaco.arm_group.get_current_pose()
-    print(start_pose)
-
-    initial_joints = [0.0, 3.1415, 0.0, 3.1415, 0.0, 3.1415, 0.0]
-    res = jaco.fk(initial_joints, links=['j2s7s300_end_effector'])
-    goal_pose = res.pose_stamped[0]
-    print(goal_pose)
-
-    traj = jaco.plan(start_pose, goal_pose)
-    print(traj)
-
-    jaco.execute(traj)
-
-    markers = jaco.planner.get_body_markers()
-    for m in markers:
-        jaco.marker_array_pub.publish(m)
-
-    tmp = raw_input("Enter to continue...")
-
-    # Move the arm to a new configuration
-    start_pose = jaco.arm_group.get_current_pose()
-
-    goal_pose = jaco.arm_group.get_current_pose()
-    goal_pose.pose.position.x += 0.5
-    goal_pose.pose.position.z -= 0.5
-
-    traj = jaco.plan(start_pose, goal_pose)
-    jaco.execute(traj)
-
-    markers = jaco.planner.get_body_markers()
-    for m in markers:
-        jaco.marker_array_pub.publish(m)
-
-    rospy.spin()
-
-    moveit_commander.roscpp_shutdown()
-
-
-def test():
-    moveit_commander.roscpp_initialize(sys.argv)
-    rospy.init_node('jaco_move_group')
-
-    jaco = JacoInterface()
 
     res = jaco.ik(jaco.arm_group.get_current_pose())
     start_config = [q for q in res.solution.joint_state.position[0:7]]
     start_config[2] += 3.1415
-    jaco.planner.jaco.SetDOFValues(start_config + jaco.planner.finger_joint_values)
+    jaco_trajopt.jaco.SetDOFValues(start_config + jaco_trajopt.finger_joint_values)
 
-    markers = jaco.planner.get_body_markers()
+    markers = jaco_trajopt.get_body_markers()
     for m in markers:
         jaco.marker_array_pub.publish(m)
 
