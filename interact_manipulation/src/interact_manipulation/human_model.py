@@ -22,10 +22,12 @@ class HumanState:
 
     @property
     def position(self):
+        #TODO add assertion here
         return self.position
     
     @position.setter
     def position(self, pos):
+        #TODO add assertion here
         self.position = pos
     
     @property
@@ -207,10 +209,10 @@ class GoalInference(object):
         current_beliefs: A list of float priors on goals, default [0.5, 0.5]
         beliefs_over_time: A list of belief lists one for each time
     """
-    def __init__(self, goals, variance = 0.01, current_beliefs = [0.5,0.5]):
+    def __init__(self, goals, current_beliefs = [0.5,0.5]):
         self.beliefs_over_time = [] #a list of lists, each belief in time
         self.goals = goals
-        self.variance = variance
+        self.variance = rospy.get_param("/goal_inference/variance")
         self.current_beliefs = current_beliefs #a list of scaler beliefs for each goal
 
     def reset(self):
