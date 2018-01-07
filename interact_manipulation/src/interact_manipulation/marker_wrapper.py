@@ -28,7 +28,7 @@ def show_position_marker(position, label = None, ident = 1, scale = (0.05,0.05,0
     waypoint_marker.id = ident
     waypoint_marker.type = Marker.SPHERE
    
-    waypoint_marker.pose = numpy_position_tomessage(position)
+    waypoint_marker.pose = _numpy_position_tomessage(position)
    
     waypoint_marker.scale.x = scale[0]
     waypoint_marker.scale.y = scale[1]
@@ -48,7 +48,7 @@ def show_position_marker(position, label = None, ident = 1, scale = (0.05,0.05,0
         text_marker.ns = '/waypoint/text'
         text_marker.id = ident
         text_marker.type = Marker.TEXT_VIEW_FACING
-        text_marker.pose = numpy_position_tomessage(position)
+        text_marker.pose = _numpy_position_tomessage(position)
         text_marker.scale.z = 0.05
         text_marker.color.r = color[0]
         text_marker.color.g = color[1]
@@ -59,7 +59,7 @@ def show_position_marker(position, label = None, ident = 1, scale = (0.05,0.05,0
         marker_pub.publish(text_marker)
         
 
-def numpy_position_tomessage(np_position):
+def _numpy_position_tomessage(np_position):
     """ Converts a numpy (3,) position to a Point message. orientation is set to 
         @Param np_position: A (3,) numpy position
         @Return pose: A pose message set to position and orientation set to (0,0,0,1)

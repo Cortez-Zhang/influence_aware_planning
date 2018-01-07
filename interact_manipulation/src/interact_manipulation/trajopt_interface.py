@@ -49,13 +49,7 @@ class JacoTrajopt:
         self.jaco = self.env.GetRobot(name)
         # self.finger_joint_values = [0.0, 0.0, 0.0]
         self.finger_joint_values = [1.0, 1.0, 1.0]
-        self.joint_names = ['j2s7s300_joint_1',
-                            'j2s7s300_joint_2',
-                            'j2s7s300_joint_3',
-                            'j2s7s300_joint_4',
-                            'j2s7s300_joint_5',
-                            'j2s7s300_joint_6',
-                            'j2s7s300_joint_7']
+        self.joint_names = ['j2s7s300_joint_{}'.format(i) for i in range(1,8)]
 
         self.trajopt_num_waypoints = 30
         self.dt = 0.2 #time between waypoints to be added in post processing
