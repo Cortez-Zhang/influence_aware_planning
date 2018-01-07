@@ -25,7 +25,7 @@
     <param name="/human_model/force_max" value="0.02"/>
     <param name="/human_model/certainty_speed_max" value="0.2"/>
     <param name="/human_model/model_name" value="certainty_based_speed"/>
-    <param name="/goal_inference/variance" value="0.01"/>
+    <param name="/goal_inference/variance" value="2"/>
     
     <!-- Parameters for the cost function-->
     <param name="/cost_func/hit_human_penalty" value="0.5"/>
