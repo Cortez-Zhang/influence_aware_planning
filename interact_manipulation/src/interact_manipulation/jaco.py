@@ -9,7 +9,7 @@ from moveit_msgs.srv import GetPositionIK, GetPositionFK
 from moveit_msgs.msg import PositionIKRequest, DisplayTrajectory, RobotState
 from std_msgs.msg import Header
 from visualization_msgs.msg import Marker, MarkerArray
-from jaco_trajopt import JacoTrajopt
+from trajopt_interface import JacoTrajopt
 
 class JacoInterface:
     def __init__(self):
