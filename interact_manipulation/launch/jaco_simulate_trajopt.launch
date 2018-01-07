@@ -13,9 +13,29 @@
 
     <param name="robot_type" value="$(arg kinova_robotType)" />
     <param name="robot_connected" value="$(arg robot_connected)" />
-
+    <param name="/robot_description_kinematics/ndof" value="7" type="int"/>
     <param name="/pick_place_demo/arm/solve_type" value="Manipulation2" />
     <param name="/pick_place_demo/arm/kinematics_solver_timeout" value="0.05" />
+
+    <!-- parameter names for the human model-->
+    <param name="/human_model/dt" value="0.2"/>
+    <param name="/human_model/mass" value="0.006"/>
+    <param name="/human_model/human_avoidance" value="0.3"/>
+    <param name="/human_model/drag" value="0"/>
+    <param name="/human_model/force_max" value="0.02"/>
+    <param name="/human_model/certainty_speed_max" value="0.2"/>
+    <param name="/human_model/model_name" value="certainty_based_speed"/>
+    <param name="/goal_inference/variance" value="0.01"/>
+    
+    <!-- Parameters for the cost function-->
+    <param name="/cost_func/hit_human_penalty" value="0.5"/>
+    <param name="/cost_func/normalize_sigma" value="1.0"/>
+    <param name="/cost_func/eef_link_name" value="j2s7s300_end_effector"/>
+    <param name="/cost_func/care_about_distance" value="0.1"/>
+    <param name="/cost_func/cost_name" value="human_speed"/>
+
+    <!-- number of waypoints for the trajectory, trajopt will optimize -->
+    <param name="/low_level_planner/num_waypoints" value="20"/>
 
     <!-- Launch the Jaco 7 DOF arm in Gazebo -->
     <include file="$(find kinova_gazebo)/launch/robot_launch.launch">

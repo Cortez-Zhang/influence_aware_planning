@@ -23,10 +23,12 @@ from std_msgs.msg import Empty, Float32MultiArray, MultiArrayLayout, MultiArrayD
 
 import marker_wrapper
 
-class HumanState():
+class HumanState:
     """Stores the state of a human
-        @Param position: Human position (3,) numpy array
-        @Param velocity: Human velocity (3,) numpy array
+        Params
+        ---
+        position: Human position (3,) numpy array
+        velocity: Human velocity (3,) numpy array
     """
     def __init__(self, position, velocity):
         """
@@ -69,15 +71,13 @@ class HumanModel(object):
         e.g. constant velocity, point_mass, certainty_based_speed
         dt: the fixed time between waypoints (default 0.2)
     """
-    def __init__(self, start_state, dt=.2, params = {'mass': .006, 
-                                                    'robot_aggressiveness': .3,
-                                                    'drag': 0,
-                                                    'force_cap': 0.02,
-                                                    'max_certainty_speed': 0.2}):
+    def __init__(self, start_state) :
         self.start_state = copy.deepcopy(start_state)
-
-        self.dt = dt #TODO replace with paramserver
-        self.params = params #TODO replace with param server Is it bad to call them a bunch?
+        
+        #specify which parameters I would like to use
+        params = ["dt","mass","human_avoidance","drag","force_max","certainty_speed_max"]
+        namespace = "/human_model/"
+        self.params = util.set_params(params,namespace)
         
         #list to keep track of human positions for displaying
         self.human_positions = []
@@ -134,21 +134,18 @@ class CertaintyBasedSpeedModel(HumanModel):
             eef_position: a (3,) numpy array with xyz position of robot end effector
         """     
         curr_pos = self.current_state.position
-        #TODO make a for loop
-        dist_goal1 = np.linalg.norm(curr_pos - self.goals[0])
-        dist_goal2 = np.linalg.norm(curr_pos - self.goals[1])
-
-        if dist_goal1>0.05 and dist_goal2>0.05:
+        #check to make sure we dont jump over the goal and oscilate forever
+        if all(np.linalg.norm(curr_pos - goal)>0.05 for goal in self.goals):
             self.goal_inference.update(eef_position,prev_eef_pos)
             b = self.goal_inference.current_beliefs
 
-            #TODO there can only be two goals expand so it can be more
-            speed = self.params["max_certainty_speed"]*(1-(min(b)*2))
+            #speed is faster if we are more certain the robot isnt going towards a goal
+            speed = self.params["certainty_speed_max"]*(1-(min(b)*len(self.goals)))
             human_goal = b.index(min(b))
             goal_dir = util.direction(curr_pos,self.goals[human_goal]) #humans goal direction
             
             next_vel = speed*goal_dir
-            next_pos = next_vel*self.dt+curr_pos
+            next_pos = next_vel*self.params["dt"]+curr_pos
             
             self.current_state.position = next_pos
             self.current_state.velocity = next_vel
@@ -166,12 +163,12 @@ class ConstantVelocityModel(HumanModel):
         """ Evolve the human state forward using a constant velocity assumption
         """
         curr_pos = self.current_state.position
-        next_pos = curr_pos + self.current_state.velocity*self.dt
+        next_pos = curr_pos + self.current_state.velocity*self.params["dt"]
         self.current_state.position = next_pos
         self.human_positions.append(next_pos)
 
 class PotentialFieldModel(HumanModel):
-    def __init__(self, start_state, goal, goal_inference):
+    def __init__(self, start_state, goal):
         super().__init__(start_state)
         self.goal = goals[0]
         #the tuning currently only works with one goal
@@ -183,16 +180,16 @@ class PotentialFieldModel(HumanModel):
         curr_pos = self.current_state.position
         curr_vel = self.current_state.velocity
 
-        F_repulse = -1*self.params["robot_aggressiveness"]*self.potential_field(eef_position,curr_pos)
+        F_repulse = -1*self.params["human_avoidance"]*self.potential_field(eef_position,curr_pos)
         
         F_attract = 0.0
         for goal in goals:
-            F_attract+= (1-self.params["robot_aggressiveness"])*self.potential_field(self.goal,curr_pos)
+            F_attract+= (1-self.params["human_avoidance"])*self.potential_field(self.goal,curr_pos)
         
         acc = (F_attract+F_repulse)*self.params["mass"]
 
-        next_vel = curr_vel+acc*self.dt
-        next_pos = 0.5*acc*self.dt**2+curr_vel*self.dt+curr_pos
+        next_vel = curr_vel+acc*self.params["dt"]
+        next_pos = 0.5*acc*self.params["dt"]**2+curr_vel*self.params["dt"]+curr_pos
 
         self.current_state.position = next_pos
         self.current_state.velocity = next_vel
@@ -207,7 +204,7 @@ class PotentialFieldModel(HumanModel):
             obstacle: a (3,) numpy array with position of obstacle or goal
             curr_pos: a (3,) numpy array with position of human
         """ 
-        epsilon = self.params["force_cap"]
+        epsilon = self.params["force_max"]
 
         force = np.empty((3,))
 
@@ -280,14 +277,15 @@ class GoalInference(object):
         self.current_beliefs = norm_belief.tolist()
 
 class AffectHumanCost(CostFunction):
-    def __init__(self, robot, human_model, eef_link_name='j2s7s300_end_effector'):
-        CostFunction.__init__(self, params={'hit_human_penalty': 0.5,
-                                            'normalize_sigma': 1.0,
-                                            'care_about_distance': 0.1})
+    def __init__(self, robot, human_model):
+        param_list = ["hit_human_penalty","normalize_sigma","care_about_distance","eef_link_name"]
+        namespace = "/cost_func/"
+        param_dict = util.set_params(param_list,namespace)
+
+        CostFunction.__init__(self, params=param_dict)
         self.robot = robot #TODO replace with imported variable
         self.human_model = human_model
-        self.eef_link_name = eef_link_name #TODO replace with param server
-        self.robotDOF = 7 #TODO replace with paramserver
+        self.robotDOF = rospy.get_param("/robot_description_kinematics/ndof")
 
     def get_cost(self, configs):
         """ Returns cost based on the distance between the end effector and the human
@@ -308,7 +306,7 @@ class AffectHumanCost(CostFunction):
         eef_positions = []
         for i in range(np.shape(configs)[1]):
             config = configs[:,i]
-            eef_positions.append(self._get_OpenRaveFK(config, self.eef_link_name))
+            eef_positions.append(self._get_OpenRaveFK(config, self.params["eef_link_name"]))
         
         # reset the human model before calculating human response - 
         # human pos will be saved for simulation
@@ -340,8 +338,8 @@ class AffectHumanCost(CostFunction):
         self.robot.SetDOFValues(q + [0.0, 0.0, 0.0])
         eef_link = self.robot.GetLink(link_name)
         if eef_link is None:
-            rospy.logerror("Error: end-effector \"{}\" does not exist".format(self.eef_link_name))
-            raise ValueError("Error: end-effector \"{}\" does not exist".format(self.eef_link_name))
+            rospy.logerror("Error: end-effector \"{}\" does not exist".format(self.params["eef_link_name"]))
+            raise ValueError("Error: end-effector \"{}\" does not exist".format(self.params["eef_link_name"]))
         eef_pose = openravepy.poseFromMatrix(eef_link.GetTransform())
         return np.array([eef_pose[4], eef_pose[5], eef_pose[6]])
 
@@ -388,21 +386,19 @@ class HumanClosenessCost(AffectHumanCost):
         for i, (human_position, eef_position) in enumerate(zip(human_positions, eef_positions)):
             #rospy.loginfo("human_position {}".format(human_position))
             distance = np.linalg.norm(human_position - eef_position)
-            if distance < self.params['care_about_distance']: #TODO replace ths with param server? maybe put param server higher up
+            if distance < self.params['care_about_distance']:
                 #TODO use potential field
                 # assign cost inverse proportional to the distance to human squared 
                 cost += self.params['hit_human_penalty'] * 1/(distance)
         return cost/2.0
-        #TODO add a parameter to scale cost for each function
-
 
 class SimplePointSimulator(object):
     """ A simple simulator to show markers for a human and robot """
     def __init__(self, robot_positions, human_positions, jaco_interface=None, repeat=True):
         self.Timer = None
-        self.repeat = repeat
+        self.repeat = repeat #whether or not the code should run continuously
 
-        self.simulated_dt = 0.2 #TODO set these better
+        self.simulated_dt = rospy.get_param("/human_model/dt")
         self.playback_dt = 0.02
 
         self.counter = 0
@@ -417,10 +413,6 @@ class SimplePointSimulator(object):
             robot_positions = self.process_positionlist(robot_positions)
         
         self.robot_positions = robot_positions
-        #rospy.loginfo("human_positions {}".format(self.human_positions))
-        #rospy.loginfo("robot_positions {}".format(self.robot_positions))
-        #rospy.loginfo("human shape {}".format(np.shape(self.human_positions)))
-        #rospy.loginfo("robot shape {}".format(np.shape(self.robot_positions)))
         assert len(self.human_positions)==len(self.robot_positions)
         
     def simulate(self):
@@ -473,7 +465,7 @@ class SimplePointSimulator(object):
             numpy array
             @Param sim_pos: A (num_sim_wpts,3) numpy array
         """
-        num_sim_wpts = 20 #TODO set this with a parameter server var
+        num_sim_wpts = rospy.get_param("/low_level_planner/num_waypoints")
         end_time = num_sim_wpts*self.simulated_dt
         num_playback_wpts = end_time/self.playback_dt
 
@@ -483,20 +475,15 @@ class SimplePointSimulator(object):
         assert np.shape(sim_pos)[0] == num_sim_wpts
 
         x = np.linspace(0, end_time, num=num_sim_wpts, endpoint=True)
-        y = np.linspace(0, end_time, num=num_sim_wpts, endpoint=True)
-        z = np.linspace(0, end_time, num=num_sim_wpts, endpoint=True)
-
         xnew = np.linspace(0, end_time, num=num_playback_wpts, endpoint=True)
-        ynew = np.linspace(0, end_time, num=num_playback_wpts, endpoint=True)
-        znew = np.linspace(0, end_time, num=num_playback_wpts, endpoint=True)
 
         playback_pos = np.empty((num_playback_wpts,3))
         playback_pos[:] = np.nan
 
         rospy.loginfo("sim_pos shape: {}".format(np.shape(sim_pos)))
-        playback_pos[:,0] = np.interp(xnew, x, sim_pos[:,0])
-        playback_pos[:,1] = np.interp(ynew, y, sim_pos[:,1])
-        playback_pos[:,2] = np.interp(znew, z, sim_pos[:,2])
+        for idx in range(3):
+            playback_pos[:,idx] = np.interp(xnew, x, sim_pos[:,idx])
+
         rospy.loginfo("playback_pos {}".format(playback_pos))
 
         return playback_pos
@@ -518,21 +505,41 @@ def main():
         goal_pose.pose.position = Point(-0.2,-0.2,0.538)
         goal_pose.pose.orientation = start_pose.pose.orientation
         
+        #create the human model #TODO use a factory here?
+        model_name = rospy.get_param("/human_model/model_name")
         goal1 = np.array([-0.4,-0.1,0.538])
         goal2 = np.array([-0.2,-0.2,0.538])
-        goals = [goal1, goal2]
-        goal_inference = GoalInference(goals, variance = 2)
+        human_start_state = HumanState(np.array([-.3,0.3,0.538]), np.array([0,0,0])) 
 
-        #create the human model
-        human_start_state = HumanState(np.array([-.3,0.3,0.538]), np.array([0,0,0]))
-        
-        human_model = CertaintyBasedSpeedModel(human_start_state, goals, goal_inference=goal_inference)
+        if model_name == "certainty_based_speed":
+            goals = [goal1, goal2]
+            goal_inference = GoalInference(goals, variance = 2)
+            human_model = CertaintyBasedSpeedModel(human_start_state, goals, goal_inference=goal_inference)
+        elif model_name == "constant_velocity_model":
+            human_model = ConstantVelocityModel(human_start_state)
+        elif model_name == "potential_field_model":
+            human_model = PotentialFieldModel(human_start_state, goal1)
+        else:
+            err = "No human model object exists with model name {}".format(model_name)
+            rospy.logerr(err)
+            raise ValueError(err)
         
         #create the robot cost function, including human model
         #TODO consider a Factory here so I dont have to handle all the function names
-        cost_func = HumanSpeedCost(jaco_interface.planner.jaco, human_model)
+        cost_name = rospy.get_param("/cost_func/cost_name")
+        if cost_name == "human_speed":
+            cost_func = HumanSpeedCost(jaco_interface.planner.jaco, human_model)
+        elif cost_name == "human_go_first":
+            cost_func = HumanGoFirstCost(jaco_interface.planner.jaco, human_model)
+        elif cost_name == "human_closeness_cost":
+            cost_func = HumanClosenessCost(jaco_interface.planner.jaco, human_model)
+        else:
+            err = "No cost object exists with cost name {}".format(cost_name)
+            rospy.logerr(err)
+            raise ValueError(err)
+
         jaco_interface.planner.cost_functions = [cost_func]
-        jaco_interface.planner.trajopt_num_waypoints = 20
+        jaco_interface.planner.trajopt_num_waypoints = rospy.get_param("/low_level_planner/num_waypoints")
         
         rospy.loginfo("Requesting plan from start_pose:\n {} \n goal_pose:\n {}".format(start_pose, goal_pose))
 
