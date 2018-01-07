@@ -237,5 +237,3 @@ class JacoTrajopt:
 
             t += dt
             p.time_from_start = rospy.Duration(t)
-
-jaco_trajopt = JacoTrajopt()
