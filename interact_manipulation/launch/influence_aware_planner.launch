@@ -66,4 +66,8 @@
     <!-- Given the published joint states, publish tf for the robot links -->
 
     <node name="rviz" pkg="rviz" type="rviz"></node>
+    
+    <node name="run_experiment" pkg="interact_manipulation" type="interact_manipulation.py">
+        <remap from="/joint_names" to="j2s7s300/joint_names"/>
+    </node>
 </launch>
