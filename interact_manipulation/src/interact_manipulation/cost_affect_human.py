@@ -7,6 +7,21 @@ import marker_wrapper
 
 import numpy as np
 
+class CostFunctionFactory(object):
+    @staticmethod
+    def factory(cost_name, human_model,jaco_interface):
+        #TODO get rid of jaco_interface
+        if cost_name == "human_speed":
+            cost_func = HumanSpeedCost(jaco_interface.planner.jaco, human_model)
+        elif cost_name == "human_go_first":
+            cost_func = HumanGoFirstCost(jaco_interface.planner.jaco, human_model)
+        elif cost_name == "human_closeness_cost":
+            cost_func = HumanClosenessCost(jaco_interface.planner.jaco, human_model)
+        else:
+            err = "No cost object exists with cost name {}".format(cost_name)
+            rospy.logerr(err)
+            raise ValueError(err)
+        return cost_func
 
 class AffectHumanCost(CostFunction):
     def __init__(self, robot, human_model):
@@ -60,11 +75,12 @@ class AffectHumanCost(CostFunction):
         pass
     
     def _get_OpenRaveFK(self, config, link_name):
-        """ Calculate the forward kinematics using openRAVE for use in cost evaluation.
-            Params
-            ---
-            config: Robot joint configuration (3,) numpy array
-            link_name: Name of the link to calculate forward kinematics for
+        """
+        Calculate the forward kinematics using openRAVE for use in cost evaluation.
+        Params
+        ---
+        config: Robot joint configuration (3,) numpy array
+        link_name: Name of the link to calculate forward kinematics for
         """
         q = config.tolist()
         self.robot.SetDOFValues(q + [0.0, 0.0, 0.0])

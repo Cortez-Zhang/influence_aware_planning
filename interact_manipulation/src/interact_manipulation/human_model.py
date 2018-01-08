@@ -45,6 +45,26 @@ class HumanState:
     
     __repr__ = __str__
 
+class ModelFactory(object):
+    @staticmethod
+    def factory(model_name, human_start_state):
+        goal1 = np.array([-0.4,-0.1,0.538])
+        goal2 = np.array([-0.2,-0.2,0.538])
+
+        if model_name == "certainty_based_speed":
+            goals = [goal1, goal2]
+            goal_inference = GoalInference(goals)
+            human_model = CertaintyBasedSpeedModel(human_start_state, goals, goal_inference=goal_inference)
+        elif model_name == "constant_velocity_model":
+            human_model = ConstantVelocityModel(human_start_state)
+        elif model_name == "potential_field_model":
+            human_model = PotentialFieldModel(human_start_state, goal1)
+        else:
+            err = "No human model object exists with model name {}".format(model_name)
+            rospy.logerr(err)
+            raise ValueError(err)
+        return human_model
+
 class HumanModel(object):
     """ Simulates a human for use in path planning (trajopt)
         Params
